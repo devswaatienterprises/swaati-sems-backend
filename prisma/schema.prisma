@@ -1,0 +1,229 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleType {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  FOLLOW_UP
+  QUOTATION_SENT
+  WON
+  LOST
+}
+
+enum FollowUpStatus {
+  PENDING
+  COMPLETED
+  RESCHEDULED
+  MISSED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  ON_LEAVE
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  role         RoleType   @default(EMPLOYEE)
+  isActive     Boolean    @default(true)
+  lastLogin    DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  employee     Employee?
+  notifications Notification[]
+  auditLogs    AuditLog[]
+}
+
+model Employee {
+  id           String     @id @default(uuid())
+  employeeCode String     @unique
+  name         String
+  email        String     @unique
+  mobile       String
+  department   String
+  designation  String
+  status       String     @default("Active")
+  joiningDate  DateTime
+  avatar       String?
+
+  userId       String?    @unique
+  user         User?      @relation(fields: [userId], references: [id])
+
+  assignedTasks Task[]    @relation("AssignedTasks")
+  createdTasks  Task[]    @relation("CreatedTasks")
+  assignedLeads Lead[]    @relation("AssignedLeads")
+  followUps     FollowUp[]
+  attendances   Attendance[]
+  customers     Customer[]
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Attendance {
+  id           String           @id @default(uuid())
+  date         DateTime         @db.Date
+  checkIn      String
+  checkOut     String           @default("-")
+  workingHours String           @default("0 hrs")
+  status       AttendanceStatus @default(PRESENT)
+  notes        String?
+
+  employeeId   String
+  employee     Employee         @relation(fields: [employeeId], references: [id])
+
+  createdAt    DateTime         @default(now())
+}
+
+model Task {
+  id           String     @id @default(uuid())
+  taskCode     String     @unique
+  title        String
+  description  String?
+  priority     Priority   @default(MEDIUM)
+  status       TaskStatus @default(TODO)
+  category     String?
+  startDate    DateTime
+  dueDate      DateTime
+
+  assignedToId String
+  assignedTo   Employee   @relation("AssignedTasks", fields: [assignedToId], references: [id])
+
+  createdById  String
+  createdBy    Employee   @relation("CreatedTasks", fields: [createdById], references: [id])
+
+  comments     TaskComment[]
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model TaskComment {
+  id        String   @id @default(uuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id])
+  author    String
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model Lead {
+  id                String     @id @default(uuid())
+  leadCode          String     @unique
+  customerCompany   String
+  contactPerson     String
+  phone             String
+  email             String?
+  productInterested String
+  requirement       String?
+  source            String     @default("Website Enquiry")
+  estimatedValue    Float      @default(0)
+  status            LeadStatus @default(NEW)
+  followUpDate      DateTime?
+
+  assignedToId      String
+  assignedTo        Employee   @relation("AssignedLeads", fields: [assignedToId], references: [id])
+
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+model Customer {
+  id               String     @id @default(uuid())
+  customerCode     String     @unique
+  companyName      String
+  contactPerson    String
+  phone            String
+  email            String
+  city             String
+  status           String     @default("Active Client")
+
+  assignedEmployeeId String
+  assignedEmployee   Employee @relation(fields: [assignedEmployeeId], references: [id])
+
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+}
+
+model FollowUp {
+  id           String         @id @default(uuid())
+  customer     String
+  product      String
+  contactPerson String
+  phone        String
+  followUpDate DateTime
+  status       FollowUpStatus @default(PENDING)
+  notes        String?
+
+  assignedToId String
+  assignedTo   Employee       @relation(fields: [assignedToId], references: [id])
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model Product {
+  id           String   @id @default(uuid())
+  productCode  String   @unique
+  name         String
+  category     String
+  brand        String
+  status       String   @default("Active")
+  datasheetUrl String?
+  imageUrl     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  title     String
+  message   String
+  type      String   @default("general")
+  unread    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  String?
+  createdAt DateTime @default(now())
+}
