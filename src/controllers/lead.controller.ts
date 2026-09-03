@@ -2,26 +2,33 @@ import { Response } from 'express';
 import { prisma } from '../config/db';
 import { ApiResponse } from '../utils/apiResponse';
 import { AuthRequest } from '../middleware/auth';
-import { LeadStatus } from '@prisma/client';
+import { LeadStatus, Priority, RoleType } from '../types/crm.types';
+import { AuditService } from '../services/audit.service';
+import { NotificationService } from '../services/notification.service';
 
 export class LeadController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
-      const user = req.user;
-      let leads;
+      const userRole = req.user?.role;
+      const employeeId = req.user?.employeeId;
 
-      if (user?.role === 'EMPLOYEE' && user.employeeId) {
-        leads = await prisma.lead.findMany({
-          where: { assignedToId: user.employeeId },
-          include: { assignedTo: true },
-          orderBy: { createdAt: 'desc' },
-        });
-      } else {
-        leads = await prisma.lead.findMany({
-          include: { assignedTo: true },
-          orderBy: { createdAt: 'desc' },
-        });
+      const whereClause: any = {};
+      if (userRole !== RoleType.ADMIN) {
+        whereClause.assignedToId = employeeId;
       }
+
+      const leads = await prisma.lead.findMany({
+        where: whereClause,
+        include: {
+          assignedTo: {
+            select: { name: true, employeeCode: true, designation: true },
+          },
+          assignedBy: {
+            select: { name: true, employeeCode: true, designation: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
 
       return ApiResponse.success(res, leads, 'Leads fetched successfully');
     } catch (err: any) {
@@ -32,44 +39,75 @@ export class LeadController {
   static async create(req: AuthRequest, res: Response) {
     try {
       const {
-        customerCompany,
-        contactPerson,
-        phone,
+        leadName,
+        companyName,
+        mobileNumber,
         email,
-        productInterested,
+        location,
         requirement,
+        productInterested,
         source,
-        estimatedValue,
+        priority,
         assignedToId,
         followUpDate,
+        notes,
       } = req.body;
 
-      if (!customerCompany || !contactPerson || !phone || !assignedToId) {
-        return ApiResponse.error(res, 'Company, contact person, phone, and assignee are required', 400);
+      if (!leadName || !mobileNumber || !productInterested) {
+        return ApiResponse.error(res, 'Lead name, mobile number, and product interested are required', 400);
       }
 
       const count = await prisma.lead.count();
-      const leadCode = `LEAD-2026-${String(count + 1).padStart(3, '0')}`;
+      const leadCode = `LEAD-2026-${100 + count + 1}`;
+      const leadAddedBy = req.user?.email ? req.user.email.split('@')[0] : 'Staff';
+      const currentEmpId = req.user?.employeeId;
 
-      const newLead = await prisma.lead.create({
+      const allowedSources = ['call', 'walkin', 'whatsapp', 'email', 'referral', 'other', 'website'];
+      const finalSource = allowedSources.includes(source?.toLowerCase()) ? source : 'call';
+
+      const lead = await prisma.lead.create({
         data: {
           leadCode,
-          customerCompany,
-          contactPerson,
-          phone,
+          leadName,
+          companyName,
+          mobileNumber,
           email,
-          productInterested: productInterested || 'Waterproofing Systems',
+          location,
           requirement,
-          source: source || 'Website Enquiry',
-          estimatedValue: parseFloat(estimatedValue) || 0,
-          status: LeadStatus.NEW,
+          productInterested,
+          source: finalSource,
+          leadAddedBy,
+          priority: (priority?.toUpperCase() as Priority) || Priority.MEDIUM,
           assignedToId,
-          followUpDate: followUpDate ? new Date(followUpDate) : new Date(Date.now() + 86400000 * 2),
+          assignedById: currentEmpId,
+          followUpDate: followUpDate ? new Date(followUpDate) : null,
+          notes,
         },
-        include: { assignedTo: true },
+        include: { assignedTo: { include: { user: true } } },
       });
 
-      return ApiResponse.success(res, newLead, 'Lead created successfully', 201);
+      // If assigned to an employee, send notification
+      if (lead.assignedTo?.userRefId) {
+        await NotificationService.sendNotification({
+          userId: lead.assignedTo.userRefId,
+          type: 'lead_assigned',
+          title: 'New Lead Assigned',
+          message: `Lead "${leadName}" (${productInterested}) has been assigned to you.`,
+          relatedType: 'Lead',
+          relatedId: lead.id,
+        });
+      }
+
+      // Audit Log
+      await AuditService.log({
+        actorUserId: req.user?.id,
+        action: 'LEAD_CREATED',
+        entityType: 'Lead',
+        entityId: lead.id,
+        metadata: { leadName, companyName, productInterested, source: finalSource },
+      });
+
+      return ApiResponse.success(res, lead, 'Lead created successfully', 201);
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }
@@ -80,13 +118,55 @@ export class LeadController {
       const { id } = req.params;
       const { status } = req.body;
 
-      const updated = await prisma.lead.update({
+      const lead = await prisma.lead.update({
         where: { id },
         data: { status: status as LeadStatus },
-        include: { assignedTo: true },
       });
 
-      return ApiResponse.success(res, updated, 'Lead status updated');
+      return ApiResponse.success(res, lead, 'Lead status updated');
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async update(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const { assignedToId, followUpDate, notes, priority } = req.body;
+
+      const lead = await prisma.lead.update({
+        where: { id },
+        data: {
+          assignedToId,
+          followUpDate: followUpDate ? new Date(followUpDate) : undefined,
+          notes,
+          priority: priority ? (priority.toUpperCase() as Priority) : undefined,
+        },
+        include: { assignedTo: { include: { user: true } } },
+      });
+
+      // If newly assigned, notify assignee
+      if (assignedToId && lead.assignedTo?.userRefId) {
+        await NotificationService.sendNotification({
+          userId: lead.assignedTo.userRefId,
+          type: 'lead_assigned',
+          title: 'Lead Assigned to You',
+          message: `Lead "${lead.leadName}" (${lead.productInterested}) is assigned to you.`,
+          relatedType: 'Lead',
+          relatedId: id,
+        });
+      }
+
+      // Audit Log
+      await AuditService.log({
+        actorUserId: req.user?.id,
+        action: 'LEAD_UPDATED',
+        entityType: 'Lead',
+        entityId: id,
+        metadata: { leadName: lead.leadName, assignedToId, priority },
+      });
+
+      return ApiResponse.success(res, lead, 'Lead updated successfully');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }

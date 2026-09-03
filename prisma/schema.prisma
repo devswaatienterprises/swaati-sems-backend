@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -7,223 +7,483 @@ generator client {
   provider = "prisma-client-js"
 }
 
-enum RoleType {
-  ADMIN
-  MANAGER
-  EMPLOYEE
-}
-
-enum TaskStatus {
-  TODO
-  IN_PROGRESS
-  COMPLETED
-  OVERDUE
-}
-
-enum Priority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
-}
-
-enum LeadStatus {
-  NEW
-  CONTACTED
-  FOLLOW_UP
-  QUOTATION_SENT
-  WON
-  LOST
-}
-
-enum FollowUpStatus {
-  PENDING
-  COMPLETED
-  RESCHEDULED
-  MISSED
-}
-
-enum AttendanceStatus {
-  PRESENT
-  LATE
-  ABSENT
-  ON_LEAVE
-}
-
+// ----------------------------------------------------
+// 1. AUTHENTICATION & USERS
+// ----------------------------------------------------
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String
-  role         RoleType   @default(EMPLOYEE)
-  isActive     Boolean    @default(true)
-  lastLogin    DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  employee     Employee?
-  notifications Notification[]
-  auditLogs    AuditLog[]
-}
-
-model Employee {
-  id           String     @id @default(uuid())
-  employeeCode String     @unique
-  name         String
-  email        String     @unique
-  mobile       String
-  department   String
-  designation  String
-  status       String     @default("Active")
-  joiningDate  DateTime
-  avatar       String?
-
-  userId       String?    @unique
-  user         User?      @relation(fields: [userId], references: [id])
-
-  assignedTasks Task[]    @relation("AssignedTasks")
-  createdTasks  Task[]    @relation("CreatedTasks")
-  assignedLeads Lead[]    @relation("AssignedLeads")
-  followUps     FollowUp[]
-  attendances   Attendance[]
-  customers     Customer[]
-
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-}
-
-model Attendance {
   id           String           @id @default(uuid())
-  date         DateTime         @db.Date
-  checkIn      String
-  checkOut     String           @default("-")
-  workingHours String           @default("0 hrs")
-  status       AttendanceStatus @default(PRESENT)
-  notes        String?
+  userId       String?          @unique @map("user_id")
+  email        String           @unique
+  passwordHash String           @map("password_hash")
+  role         String           @default("EMPLOYEE") // ADMIN, EMPLOYEE
+  isActive     Boolean          @default(true) @map("active")
+  lastLogin    DateTime?        @map("last_login")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
 
-  employeeId   String
-  employee     Employee         @relation(fields: [employeeId], references: [id])
+  employee            Employee?
+  permissions         UserPermission[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  conversationMembers ConversationMember[]
+  messages            Message[]
 
-  createdAt    DateTime         @default(now())
+  @@map("users")
 }
 
+// ----------------------------------------------------
+// 2. USER PERMISSIONS (Granular Server-Side RBAC)
+// ----------------------------------------------------
+model UserPermission {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  featureKey String   @map("feature_key")
+  enabled    Boolean  @default(true)
+  updatedBy  String?  @map("updated_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, featureKey])
+  @@index([userId])
+  @@map("user_permissions")
+}
+
+// ----------------------------------------------------
+// 3. EMPLOYEE RECORDS
+// ----------------------------------------------------
+model Employee {
+  id               String               @id @default(uuid())
+  employeeCode     String               @unique @map("employee_code")
+  userId           String?              @unique @map("user_id")
+  name             String               @map("full_name")
+  email            String               @unique
+  mobile           String               @map("mobile_number")
+  department       String
+  designation      String
+  reportingManager String?              @map("reporting_manager")
+  joiningDate      DateTime             @map("joining_date")
+  employmentStatus String               @default("Active") @map("employment_status")
+  active           Boolean              @default(true)
+  avatar           String?
+  deactivatedAt    DateTime?            @map("deactivated_at")
+  deactivatedBy    String?              @map("deactivated_by")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  userRefId        String?              @unique @map("user_ref_id")
+  user             User?                @relation(fields: [userRefId], references: [id], onDelete: SetNull)
+
+  documents        EmployeeDocument[]
+  attendances      Attendance[]
+  leaveRequests    LeaveRequest[]
+  assignedTasks    Task[]               @relation("AssignedTasks")
+  createdTasks     Task[]               @relation("CreatedTasks")
+  assignedLeads    Lead[]               @relation("AssignedLeads")
+  createdLeads     Lead[]               @relation("CreatedLeads")
+
+  @@index([userId])
+  @@index([active])
+  @@index([department])
+  @@map("employees")
+}
+
+// ----------------------------------------------------
+// 4. EMPLOYEE IDENTITY DOCUMENTS (Secure Storage)
+// ----------------------------------------------------
+model EmployeeDocument {
+  id             String   @id @default(uuid())
+  employeeId     String   @map("employee_id")
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  documentType   String   @map("document_type") // Aadhaar, PAN, Driving License, Passport, Voter ID, Other
+  documentNumber String   @map("document_number")
+  frontImagePath String?  @map("front_image_path")
+  backImagePath  String?  @map("back_image_path")
+  uploadedBy     String?  @map("uploaded_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@map("employee_documents")
+}
+
+// ----------------------------------------------------
+// 5. ATTENDANCE & SHIFT SESSIONS
+// ----------------------------------------------------
+model Attendance {
+  id               String   @id @default(uuid())
+  employeeId       String   @map("employee_id")
+  employee         Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  attendanceDate   DateTime @map("attendance_date")
+  checkIn          String   @map("check_in")
+  checkOut         String   @default("-") @map("check_out")
+  workingMinutes   Int      @default(0) @map("working_minutes")
+  workingHours     String   @default("0 hrs") @map("working_hours")
+  attendanceStatus String   @default("PRESENT") @map("attendance_status") // PRESENT, LATE, HALF_DAY, ABSENT, ON_LEAVE, HOLIDAY, WEEKLY_OFF
+  isLate           Boolean  @default(false) @map("is_late")
+  lateMinutes      Int      @default(0) @map("late_minutes")
+  notes            String?
+  correctedBy      String?  @map("corrected_by")
+  correctionReason String?  @map("correction_reason")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([employeeId, attendanceDate])
+  @@index([employeeId])
+  @@index([attendanceDate])
+  @@index([attendanceStatus])
+  @@map("attendance")
+}
+
+// ----------------------------------------------------
+// 6. LEAVE REQUESTS
+// ----------------------------------------------------
+model LeaveRequest {
+  id              String    @id @default(uuid())
+  employeeId      String    @map("employee_id")
+  employee        Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType       String    @default("Casual Leave") @map("leave_type")
+  startDate       DateTime  @map("start_date")
+  endDate         DateTime  @map("end_date")
+  totalDays       Float     @default(1) @map("total_days")
+  reason          String
+  status          String    @default("PENDING") // PENDING, APPROVED, REJECTED, CANCELLED
+  appliedAt       DateTime  @default(now()) @map("applied_at")
+  reviewedAt      DateTime? @map("reviewed_at")
+  reviewedBy      String?   @map("reviewed_by")
+  reviewerRemarks String?   @map("reviewer_remarks")
+  cancelledAt     DateTime? @map("cancelled_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([employeeId])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@map("leave_requests")
+}
+
+// ----------------------------------------------------
+// 7. TASK MANAGEMENT & ASSIGNMENT HISTORY
+// ----------------------------------------------------
 model Task {
-  id           String     @id @default(uuid())
-  taskCode     String     @unique
+  id           String                  @id @default(uuid())
+  taskCode     String                  @unique @map("task_code")
   title        String
   description  String?
-  priority     Priority   @default(MEDIUM)
-  status       TaskStatus @default(TODO)
+  priority     String                  @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  status       String                  @default("TODO") // TODO, IN_PROGRESS, COMPLETED, OVERDUE, CANCELLED
   category     String?
-  startDate    DateTime
-  dueDate      DateTime
+  startDate    DateTime                @map("start_date")
+  deadline     DateTime
+  reminderAt   DateTime?               @map("reminder_at")
+  reminderTime String?                 @map("reminder_time")
+  completedAt  DateTime?               @map("completed_at")
 
-  assignedToId String
-  assignedTo   Employee   @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  assignedToId String                  @map("assigned_to_id")
+  assignedTo   Employee                @relation("AssignedTasks", fields: [assignedToId], references: [id])
 
-  createdById  String
-  createdBy    Employee   @relation("CreatedTasks", fields: [createdById], references: [id])
+  assignedById String                  @map("assigned_by_id")
+  assignedBy   Employee                @relation("CreatedTasks", fields: [assignedById], references: [id])
 
   comments     TaskComment[]
+  history      TaskAssignmentHistory[]
 
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+
+  @@index([assignedToId])
+  @@index([assignedById])
+  @@index([status])
+  @@index([deadline])
+  @@map("tasks")
 }
 
 model TaskComment {
   id        String   @id @default(uuid())
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id])
+  taskId    String   @map("task_id")
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   author    String
   content   String
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([taskId])
+  @@map("task_comments")
 }
 
+model TaskAssignmentHistory {
+  id                 String   @id @default(uuid())
+  taskId             String   @map("task_id")
+  task               Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  previousAssigneeId String?  @map("previous_assignee_id")
+  newAssigneeId      String   @map("new_assignee_id")
+  changedBy          String   @map("changed_by")
+  changedAt          DateTime @default(now()) @map("changed_at")
+
+  @@index([taskId])
+  @@map("task_assignment_history")
+}
+
+// ----------------------------------------------------
+// 8. LEADS MANAGEMENT
+// ----------------------------------------------------
 model Lead {
-  id                String     @id @default(uuid())
-  leadCode          String     @unique
-  customerCompany   String
-  contactPerson     String
-  phone             String
+  id                String    @id @default(uuid())
+  leadCode          String    @unique @map("lead_code")
+  leadName          String    @map("lead_name")
+  companyName       String?   @map("company_name")
+  mobileNumber      String    @map("mobile_number")
   email             String?
-  productInterested String
+  location          String?
   requirement       String?
-  source            String     @default("Website Enquiry")
-  estimatedValue    Float      @default(0)
-  status            LeadStatus @default(NEW)
-  followUpDate      DateTime?
+  productInterested String    @map("interested_product")
+  source            String    @default("website") @map("lead_source") // website, call, walkin, whatsapp, email, referral, other
+  leadAddedBy       String    @default("website") @map("added_by")
+  status            String    @default("NEW") // NEW, CONTACTED, FOLLOW_UP, QUALIFIED, QUOTATION_SENT, NEGOTIATION, WON, LOST
+  priority          String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  notes             String?
+  followUpDate      DateTime? @map("follow_up_date")
 
-  assignedToId      String
-  assignedTo        Employee   @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  assignedToId      String?   @map("assigned_to_id")
+  assignedTo        Employee? @relation("AssignedLeads", fields: [assignedToId], references: [id])
 
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  assignedById      String?   @map("assigned_by_id")
+  assignedBy        Employee? @relation("CreatedLeads", fields: [assignedById], references: [id])
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([source])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([followUpDate])
+  @@map("leads")
 }
 
-model Customer {
-  id               String     @id @default(uuid())
-  customerCode     String     @unique
-  companyName      String
-  contactPerson    String
-  phone            String
-  email            String
-  city             String
-  status           String     @default("Active Client")
-
-  assignedEmployeeId String
-  assignedEmployee   Employee @relation(fields: [assignedEmployeeId], references: [id])
-
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
-}
-
-model FollowUp {
-  id           String         @id @default(uuid())
-  customer     String
-  product      String
-  contactPerson String
-  phone        String
-  followUpDate DateTime
-  status       FollowUpStatus @default(PENDING)
-  notes        String?
-
-  assignedToId String
-  assignedTo   Employee       @relation(fields: [assignedToId], references: [id])
-
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-}
-
+// ----------------------------------------------------
+// 9. PRODUCTS & PRODUCT DOCUMENT LIBRARY (Single Source of Truth)
+// ----------------------------------------------------
 model Product {
-  id           String   @id @default(uuid())
-  productCode  String   @unique
+  id           String            @id @default(uuid())
+  productCode  String            @unique @map("product_code")
   name         String
   category     String
   brand        String
-  status       String   @default("Active")
-  datasheetUrl String?
-  imageUrl     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  productType  String?           @map("product_type")
+  subcategory  String?
+  status       String            @default("Active")
+  datasheetUrl String?           @map("datasheet_url")
+
+  documents    ProductDocument[]
+
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+
+  @@index([category])
+  @@index([brand])
+  @@index([status])
+  @@map("products")
 }
 
+model ProductDocument {
+  id           String    @id @default(uuid())
+  productId    String    @map("product_id")
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  title        String    @default("Technical Datasheet (TDS)")
+  documentType String    @default("datasheet") @map("document_type") // datasheet, brochure, catalogue, other
+  fileName     String    @map("file_name")
+  storagePath  String?   @map("storage_path")
+  fileUrl      String    @map("file_url")
+  fileSize     String    @default("1.0 MB") @map("file_size")
+  mimeType     String?   @map("mime_type")
+  version      String    @default("v1.0")
+  isActive     Boolean   @default(true) @map("is_active")
+  uploadedBy   String    @default("Admin") @map("uploaded_by")
+  replacedAt   DateTime? @map("replaced_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([productId])
+  @@index([isActive])
+  @@index([documentType])
+  @@map("product_documents")
+}
+
+// ----------------------------------------------------
+// 10. NOTIFICATIONS
+// ----------------------------------------------------
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  title     String
-  message   String
-  type      String   @default("general")
-  unread    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String    @default("system")
+  title       String
+  message     String
+  relatedType String?   @map("related_type")
+  relatedId   String?   @map("related_id")
+  isRead      Boolean   @default(false) @map("is_read")
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([type])
+  @@map("notifications")
 }
 
-model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id])
-  action    String
-  entity    String
-  entityId  String?
-  metadata  String?
-  createdAt DateTime @default(now())
+// ----------------------------------------------------
+// 11. INTERNAL MESSAGING (Conversations & Members)
+// ----------------------------------------------------
+model Conversation {
+  id        String               @id @default(uuid())
+  title     String?
+  isGroup   Boolean              @default(false) @map("is_group")
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+
+  members   ConversationMember[]
+  messages  Message[]
+
+  @@map("conversations")
 }
+
+model ConversationMember {
+  id             String       @id @default(uuid())
+  conversationId String       @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt       DateTime     @default(now()) @map("joined_at")
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String       @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String       @map("sender_id")
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content        String       @map("message")
+  attachmentPath String?      @map("attachment_path")
+  isRead         Boolean      @default(false) @map("is_read")
+  readAt         DateTime?    @map("read_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// ----------------------------------------------------
+// 12. CONFIGURABLE BUSINESS SETTINGS
+// ----------------------------------------------------
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+// ----------------------------------------------------
+// 13. AUDIT / ACTIVITY TRAIL
+// ----------------------------------------------------
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?  @map("actor_user_id")
+  user        User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  oldValue    String?  @map("old_value")
+  newValue    String?  @map("new_value")
+  metadata    String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([actorUserId])
+  @@index([entityType])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ----------------------------------------------------
+// 14. CONTENT & TRANSLATION MANAGEMENT LAYER
+// ----------------------------------------------------
+model Language {
+  id        String   @id @default(uuid())
+  code      String   @unique // 'en', 'mr', 'hi'
+  name      String   // 'English', 'मराठी', 'हिंदी'
+  isEnabled Boolean  @default(true) @map("is_enabled")
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  translations ContentTranslation[]
+  versions     ContentVersion[]
+
+  @@map("languages")
+}
+
+model ContentItem {
+  id          String   @id @default(uuid())
+  contentKey  String   @unique @map("content_key")
+  module      String   // 'navigation', 'global', 'tasks', 'leads', 'attendance', 'leave', 'products', 'reports', 'settings'
+  contentType String   @default("text") @map("content_type") // 'button', 'title', 'subtitle', 'placeholder', 'label', 'message', 'status'
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdBy   String?  @map("created_by")
+  updatedBy   String?  @map("updated_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  translations ContentTranslation[]
+  versions     ContentVersion[]
+
+  @@index([module])
+  @@index([contentKey])
+  @@map("content_items")
+}
+
+model ContentTranslation {
+  id            String      @id @default(uuid())
+  contentItemId String      @map("content_item_id")
+  contentItem   ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  languageId    String      @map("language_id")
+  language      Language    @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  value         String
+  status        String      @default("published") // 'draft', 'published', 'archived'
+  createdBy     String?     @map("created_by")
+  updatedBy     String?     @map("updated_by")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@unique([contentItemId, languageId])
+  @@index([contentItemId])
+  @@index([languageId])
+  @@index([status])
+  @@map("content_translations")
+}
+
+model ContentVersion {
+  id            String      @id @default(uuid())
+  contentItemId String      @map("content_item_id")
+  contentItem   ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+  languageId    String      @map("language_id")
+  language      Language    @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  version       Int         @default(1)
+  value         String
+  status        String      @default("published") // 'draft', 'published', 'archived'
+  changedBy     String?     @map("changed_by")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([contentItemId])
+  @@index([languageId])
+  @@map("content_versions")
+}
+

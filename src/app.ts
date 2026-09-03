@@ -9,8 +9,24 @@ import { errorHandler } from './middleware/errorHandler';
 const app = express();
 
 // Security & Middleware
-app.use(helmet());
-app.use(cors({ origin: env.CORS_ORIGINS, credentials: true }));
+app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        env.CORS_ORIGINS.includes(origin) ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1') ||
+        origin.includes('swaatienterprises.in')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
