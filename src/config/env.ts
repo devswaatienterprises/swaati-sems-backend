@@ -17,10 +17,20 @@ if (isProduction && !process.env.DATABASE_URL) {
   );
 }
 
-const rawCorsOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
-  .split(',')
-  .map((o) => o.trim())
-  .filter(Boolean);
+const sanitizeOrigin = (url?: string): string => {
+  if (!url) return '';
+  return url
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim()
+    .replace(/\/+$/, '');
+};
+
+const trustedProductionOrigins = [
+  'https://swaati-sems-crm.onrender.com',
+  'https://swaatienterprises.in',
+  'https://www.swaatienterprises.in',
+];
 
 const devOrigins = [
   'http://localhost:3000',
@@ -29,15 +39,20 @@ const devOrigins = [
   'http://127.0.0.1:3001',
 ];
 
+const rawCorsOrigins = (process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map(sanitizeOrigin)
+  .filter(Boolean);
+
 const explicitOrigins = [
-  process.env.FRONTEND_URL?.trim(),
-  process.env.CRM_URL?.trim(),
+  sanitizeOrigin(process.env.FRONTEND_URL),
+  sanitizeOrigin(process.env.CRM_URL),
   ...rawCorsOrigins,
+  ...trustedProductionOrigins,
+  ...devOrigins,
 ].filter(Boolean) as string[];
 
-const CORS_ORIGINS: string[] = isProduction
-  ? Array.from(new Set(explicitOrigins))
-  : Array.from(new Set([...devOrigins, ...explicitOrigins]));
+const CORS_ORIGINS: string[] = Array.from(new Set(explicitOrigins));
 
 export const env = {
   NODE_ENV: process.env.NODE_ENV || 'development',

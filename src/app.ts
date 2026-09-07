@@ -19,29 +19,20 @@ app.use(
   })
 );
 
-// Strict Production CORS
+// Strict CORS Handling
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, server-to-server, curl, health checks)
       if (!origin) return callback(null, true);
 
-      if (env.IS_PRODUCTION) {
-        if (env.CORS_ORIGINS.includes(origin)) {
-          return callback(null, true);
-        }
-        return callback(new Error(`Origin ${origin} is not allowed by CORS policy.`));
-      } else {
-        // Development mode: allow localhost and configured origins
-        if (
-          env.CORS_ORIGINS.includes(origin) ||
-          origin.includes('localhost') ||
-          origin.includes('127.0.0.1')
-        ) {
-          return callback(null, true);
-        }
+      const normalizedOrigin = origin.trim().replace(/^["']|["']$/g, '').trim().replace(/\/+$/, '');
+
+      if (env.CORS_ORIGINS.includes(normalizedOrigin)) {
         return callback(null, true);
       }
+
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
