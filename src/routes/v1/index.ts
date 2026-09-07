@@ -16,6 +16,8 @@ import { AuditController } from '../../controllers/audit.controller';
 import { ContentController } from '../../controllers/content.controller';
 import { authenticate } from '../../middleware/auth';
 import { authorize, requirePermission, RoleType } from '../../middleware/rbac';
+import { uploadMiddleware } from '../../middleware/upload';
+import { authLimiter, publicLeadLimiter, uploadLimiter } from '../../middleware/rateLimit';
 
 const router = Router();
 
@@ -33,12 +35,12 @@ router.get('/health', (req, res) => {
 // ==========================================
 router.get('/public/products', PublicController.getProducts);
 router.get('/public/products/:id/datasheet', PublicController.getProductDatasheet);
-router.post('/public/leads', PublicController.submitWebsiteLead);
+router.post('/public/leads', publicLeadLimiter, PublicController.submitWebsiteLead);
 
 // ==========================================
 // 2. AUTHENTICATION & PROFILE
 // ==========================================
-router.post('/auth/login', AuthController.login);
+router.post('/auth/login', authLimiter, AuthController.login);
 router.post('/auth/logout', AuthController.logout);
 router.get('/auth/me', authenticate, AuthController.me);
 
@@ -51,7 +53,29 @@ router.post('/employees', authenticate, authorize([RoleType.ADMIN]), EmployeeCon
 router.put('/employees/:id', authenticate, authorize([RoleType.ADMIN]), EmployeeController.update);
 router.patch('/employees/:id/status', authenticate, authorize([RoleType.ADMIN]), EmployeeController.updateStatus);
 router.patch('/employees/:id/permissions', authenticate, authorize([RoleType.ADMIN]), EmployeeController.updatePermissions);
-router.post('/employees/:id/documents', authenticate, authorize([RoleType.ADMIN]), EmployeeController.addDocument);
+router.post(
+  '/employees/:id/documents',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  uploadLimiter,
+  uploadMiddleware.fields([
+    { name: 'frontImage', maxCount: 1 },
+    { name: 'backImage', maxCount: 1 },
+  ]),
+  EmployeeController.addDocument
+);
+router.get(
+  '/employees/:id/documents/:docId/signed-url',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  EmployeeController.getKycSignedUrls
+);
+router.delete(
+  '/employees/:id/documents/:docId',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  EmployeeController.deleteDocument
+);
 
 // ==========================================
 // 4. ATTENDANCE & SHIFTS
@@ -91,16 +115,50 @@ router.patch('/leads/:id/status', authenticate, requirePermission('leads'), Lead
 // ==========================================
 router.get('/products', authenticate, requirePermission('products'), ProductController.getAll);
 router.post('/products', authenticate, authorize([RoleType.ADMIN]), ProductController.create);
-router.post('/products/:id/documents', authenticate, authorize([RoleType.ADMIN]), ProductController.uploadDocument);
-router.put('/products/:id/documents/:docId', authenticate, authorize([RoleType.ADMIN]), ProductController.replaceDocument);
+router.post(
+  '/products/:id/documents',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  uploadLimiter,
+  uploadMiddleware.single('file'),
+  ProductController.uploadDocument
+);
+router.put(
+  '/products/:id/documents/:docId',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  uploadLimiter,
+  uploadMiddleware.single('file'),
+  ProductController.replaceDocument
+);
+router.get(
+  '/products/:id/documents/:docId/signed-url',
+  authenticate,
+  ProductController.getDocumentSignedUrl
+);
 router.delete('/products/:id/documents/:docId', authenticate, authorize([RoleType.ADMIN]), ProductController.deleteDocument);
 
 // ==========================================
 // 9. INTERNAL MESSAGING
 // ==========================================
 router.get('/messages/conversations', authenticate, requirePermission('messaging'), MessageController.getConversations);
+router.get('/messages/conversations/:conversationId', authenticate, requirePermission('messaging'), MessageController.getConversationMessages);
+router.post('/messages/groups', authenticate, requirePermission('messaging'), MessageController.createGroup);
 router.get('/messages/:recipientId', authenticate, requirePermission('messaging'), MessageController.getMessages);
-router.post('/messages', authenticate, requirePermission('messaging'), MessageController.sendMessage);
+router.post(
+  '/messages',
+  authenticate,
+  requirePermission('messaging'),
+  uploadLimiter,
+  uploadMiddleware.single('attachment'),
+  MessageController.sendMessage
+);
+router.get(
+  '/messages/attachments/:messageId/signed-url',
+  authenticate,
+  requirePermission('messaging'),
+  MessageController.getAttachmentSignedUrl
+);
 
 // ==========================================
 // 10. NOTIFICATIONS

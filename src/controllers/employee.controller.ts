@@ -5,6 +5,7 @@ import { ApiResponse } from '../utils/apiResponse';
 import { AuthRequest } from '../middleware/auth';
 import { RoleType } from '../types/crm.types';
 import { AuditService } from '../services/audit.service';
+import { R2Service } from '../services/r2.service';
 
 export class EmployeeController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -299,10 +300,39 @@ export class EmployeeController {
   static async addDocument(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      const { documentType, documentNumber, frontImagePath, backImagePath } = req.body;
+      const { documentType, documentNumber } = req.body;
 
       if (!documentType || !documentNumber) {
         return ApiResponse.error(res, 'Document type and number are required', 400);
+      }
+
+      let frontImagePath = req.body.frontImagePath || null;
+      let backImagePath = req.body.backImagePath || null;
+
+      // Handle multipart files uploaded to Cloudflare R2
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      if (files?.frontImage?.[0]) {
+        const file = files.frontImage[0];
+        const key = R2Service.generateKey('employees', id, `front-${file.originalname}`);
+        await R2Service.upload({
+          key,
+          buffer: file.buffer,
+          mimeType: file.mimetype,
+          metadata: { employeeId: id, side: 'front', documentType },
+        });
+        frontImagePath = key;
+      }
+
+      if (files?.backImage?.[0]) {
+        const file = files.backImage[0];
+        const key = R2Service.generateKey('employees', id, `back-${file.originalname}`);
+        await R2Service.upload({
+          key,
+          buffer: file.buffer,
+          mimeType: file.mimetype,
+          metadata: { employeeId: id, side: 'back', documentType },
+        });
+        backImagePath = key;
       }
 
       const doc = await prisma.employeeDocument.create({
@@ -316,9 +346,95 @@ export class EmployeeController {
         },
       });
 
-      return ApiResponse.success(res, doc, 'Identity document registered', 201);
+      // Audit Log
+      await AuditService.log({
+        actorUserId: req.user?.id,
+        action: 'EMPLOYEE_KYC_UPLOADED',
+        entityType: 'EmployeeDocument',
+        entityId: doc.id,
+        metadata: { employeeId: id, documentType, documentNumber },
+      });
+
+      return ApiResponse.success(res, doc, 'Identity document registered in private R2 storage', 201);
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async getKycSignedUrls(req: AuthRequest, res: Response) {
+    try {
+      const { id, docId } = req.params;
+
+      const doc = await prisma.employeeDocument.findFirst({
+        where: { id: docId, employeeId: id },
+      });
+
+      if (!doc) {
+        return ApiResponse.error(res, 'Employee document not found', 404);
+      }
+
+      let frontSignedUrl: string | null = null;
+      let backSignedUrl: string | null = null;
+
+      if (doc.frontImagePath) {
+        frontSignedUrl = await R2Service.getSignedDownloadUrl(doc.frontImagePath, 1800); // 30 min
+      }
+
+      if (doc.backImagePath) {
+        backSignedUrl = await R2Service.getSignedDownloadUrl(doc.backImagePath, 1800);
+      }
+
+      return ApiResponse.success(
+        res,
+        {
+          id: doc.id,
+          documentType: doc.documentType,
+          documentNumber: doc.documentNumber,
+          frontSignedUrl,
+          backSignedUrl,
+          expiresInSeconds: 1800,
+        },
+        'Presigned KYC document URLs generated'
+      );
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async deleteDocument(req: AuthRequest, res: Response) {
+    try {
+      const { id, docId } = req.params;
+
+      const doc = await prisma.employeeDocument.findFirst({
+        where: { id: docId, employeeId: id },
+      });
+
+      if (!doc) {
+        return ApiResponse.error(res, 'Employee document not found', 404);
+      }
+
+      // Delete from R2 private storage
+      if (doc.frontImagePath) {
+        try {
+          await R2Service.delete(doc.frontImagePath);
+        } catch (e) {
+          console.warn('[R2 Storage]: Warning deleting front image from bucket', e);
+        }
+      }
+      if (doc.backImagePath) {
+        try {
+          await R2Service.delete(doc.backImagePath);
+        } catch (e) {
+          console.warn('[R2 Storage]: Warning deleting back image from bucket', e);
+        }
+      }
+
+      await prisma.employeeDocument.delete({ where: { id: docId } });
+
+      return ApiResponse.success(res, null, 'Employee identity document removed from storage');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }
   }
 }
+

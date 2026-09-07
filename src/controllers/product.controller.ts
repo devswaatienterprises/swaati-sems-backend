@@ -3,6 +3,7 @@ import { prisma } from '../config/db';
 import { ApiResponse } from '../utils/apiResponse';
 import { AuthRequest } from '../middleware/auth';
 import { AuditService } from '../services/audit.service';
+import { R2Service } from '../services/r2.service';
 
 export class ProductController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -62,10 +63,34 @@ export class ProductController {
   static async uploadDocument(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      const { title, documentType, fileName, fileSize, version, fileUrl, storagePath } = req.body;
+      const { title, documentType, version } = req.body;
 
-      if (!fileName || !fileUrl) {
-        return ApiResponse.error(res, 'File name and file URL are required', 400);
+      let fileName = req.body.fileName;
+      let fileSize = req.body.fileSize || '1.0 MB';
+      let fileUrl = req.body.fileUrl;
+      let storagePath = req.body.storagePath || null;
+      let mimeType = req.body.mimeType || null;
+
+      // Handle multipart file upload to Cloudflare R2
+      if (req.file) {
+        fileName = req.file.originalname;
+        mimeType = req.file.mimetype;
+        fileSize = `${(req.file.size / (1024 * 1024)).toFixed(2)} MB`;
+
+        const key = R2Service.generateKey('products', id, fileName);
+        await R2Service.upload({
+          key,
+          buffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+          metadata: { productId: id, title: title || 'Technical Datasheet' },
+        });
+
+        storagePath = key;
+        fileUrl = `/api/v1/products/${id}/documents/r2/${encodeURIComponent(key)}`;
+      }
+
+      if (!fileName || (!fileUrl && !storagePath)) {
+        return ApiResponse.error(res, 'File name and file content/URL are required', 400);
       }
 
       const document = await prisma.productDocument.create({
@@ -75,10 +100,11 @@ export class ProductController {
           documentType: documentType || 'datasheet',
           fileName,
           storagePath,
-          fileSize: fileSize || '1.0 MB',
+          fileSize,
+          mimeType,
           version: version || 'v1.0',
           uploadedBy: req.user?.email || 'Admin',
-          fileUrl,
+          fileUrl: fileUrl || `/api/v1/products/${id}/documents/r2/${encodeURIComponent(storagePath || '')}`,
           isActive: true,
         },
       });
@@ -89,10 +115,50 @@ export class ProductController {
         action: 'DOCUMENT_UPLOADED',
         entityType: 'ProductDocument',
         entityId: document.id,
-        metadata: { productId: id, fileName, version: document.version },
+        metadata: { productId: id, fileName, version: document.version, storagePath },
       });
 
-      return ApiResponse.success(res, document, 'Document uploaded successfully', 201);
+      return ApiResponse.success(res, document, 'Document uploaded to R2 storage successfully', 201);
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async getDocumentSignedUrl(req: AuthRequest, res: Response) {
+    try {
+      const { docId } = req.params;
+
+      const document = await prisma.productDocument.findUnique({
+        where: { id: docId },
+      });
+
+      if (!document) {
+        return ApiResponse.error(res, 'Document not found', 404);
+      }
+
+      if (!document.storagePath) {
+        // Return existing legacy fileUrl if not in R2
+        return ApiResponse.success(
+          res,
+          { url: document.fileUrl, fileName: document.fileName, isDirect: true },
+          'Document URL retrieved'
+        );
+      }
+
+      // Generate 1-hour presigned download URL from Cloudflare R2
+      const signedUrl = await R2Service.getSignedDownloadUrl(document.storagePath, 3600);
+
+      return ApiResponse.success(
+        res,
+        {
+          signedUrl,
+          fileName: document.fileName,
+          mimeType: document.mimeType,
+          fileSize: document.fileSize,
+          expiresInSeconds: 3600,
+        },
+        'Presigned R2 download URL generated'
+      );
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }
@@ -101,7 +167,7 @@ export class ProductController {
   static async replaceDocument(req: AuthRequest, res: Response) {
     try {
       const { docId } = req.params;
-      const { title, fileName, fileSize, version, fileUrl, storagePath } = req.body;
+      const { title, version } = req.body;
 
       const existingDoc = await prisma.productDocument.findUnique({
         where: { id: docId },
@@ -109,6 +175,30 @@ export class ProductController {
 
       if (!existingDoc) {
         return ApiResponse.error(res, 'Target document to replace was not found', 404);
+      }
+
+      let fileName = req.body.fileName || existingDoc.fileName;
+      let fileSize = req.body.fileSize || existingDoc.fileSize;
+      let fileUrl = req.body.fileUrl || existingDoc.fileUrl;
+      let storagePath = req.body.storagePath || existingDoc.storagePath;
+      let mimeType = req.body.mimeType || existingDoc.mimeType;
+
+      // Handle multipart file upload to Cloudflare R2 for replacement
+      if (req.file) {
+        fileName = req.file.originalname;
+        mimeType = req.file.mimetype;
+        fileSize = `${(req.file.size / (1024 * 1024)).toFixed(2)} MB`;
+
+        const key = R2Service.generateKey('products', existingDoc.productId, fileName);
+        await R2Service.upload({
+          key,
+          buffer: req.file.buffer,
+          mimeType: req.file.mimetype,
+          metadata: { productId: existingDoc.productId, title: title || existingDoc.title },
+        });
+
+        storagePath = key;
+        fileUrl = `/api/v1/products/${existingDoc.productId}/documents/r2/${encodeURIComponent(key)}`;
       }
 
       // Archive previous version
@@ -126,12 +216,13 @@ export class ProductController {
           productId: existingDoc.productId,
           title: title || existingDoc.title,
           documentType: existingDoc.documentType,
-          fileName: fileName || existingDoc.fileName,
+          fileName,
           storagePath,
-          fileSize: fileSize || existingDoc.fileSize,
+          fileSize,
+          mimeType,
           version: version || 'v2.0',
           uploadedBy: req.user?.email || 'Admin',
-          fileUrl: fileUrl || existingDoc.fileUrl,
+          fileUrl,
           isActive: true,
         },
       });
@@ -147,13 +238,14 @@ export class ProductController {
           previousVersion: existingDoc.version,
           newVersion: newVersionDoc.version,
           fileName: newVersionDoc.fileName,
+          storagePath,
         },
       });
 
       return ApiResponse.success(
         res,
         newVersionDoc,
-        `Datasheet replaced and upgraded to ${newVersionDoc.version}. Website sync active.`
+        `Datasheet replaced and upgraded to ${newVersionDoc.version}. Stored in Cloudflare R2.`
       );
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
@@ -169,6 +261,15 @@ export class ProductController {
         return ApiResponse.error(res, 'Document not found', 404);
       }
 
+      // Delete from Cloudflare R2 if stored there
+      if (doc.storagePath) {
+        try {
+          await R2Service.delete(doc.storagePath);
+        } catch (r2Err) {
+          console.warn('[R2 Storage]: Warning deleting object from bucket', r2Err);
+        }
+      }
+
       await prisma.productDocument.delete({ where: { id: docId } });
 
       // Audit Log
@@ -177,10 +278,10 @@ export class ProductController {
         action: 'DOCUMENT_DELETED',
         entityType: 'ProductDocument',
         entityId: docId,
-        metadata: { fileName: doc.fileName },
+        metadata: { fileName: doc.fileName, storagePath: doc.storagePath },
       });
 
-      return ApiResponse.success(res, null, 'Document removed from library');
+      return ApiResponse.success(res, null, 'Document removed from library and storage');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }

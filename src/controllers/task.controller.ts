@@ -47,6 +47,19 @@ export class TaskController {
         return ApiResponse.error(res, 'Assigner employee profile not found', 400);
       }
 
+      // Resolve employee by UUID, employeeCode, or user_id
+      const targetEmp = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { id: assignedToId },
+            { employeeCode: assignedToId },
+            { userId: assignedToId },
+          ],
+        },
+      });
+
+      const finalAssignedToId = targetEmp ? targetEmp.id : assignedToId;
+
       const count = await prisma.task.count();
       const taskCode = `TSK-${500 + count + 1}`;
 
@@ -61,7 +74,7 @@ export class TaskController {
           startDate: startDate ? new Date(startDate) : new Date(),
           deadline: new Date(deadline),
           reminderTime,
-          assignedToId,
+          assignedToId: finalAssignedToId,
           assignedById: currentEmpId,
         },
         include: {
@@ -75,13 +88,13 @@ export class TaskController {
         data: {
           taskId: task.id,
           previousAssigneeId: null,
-          newAssigneeId: assignedToId,
+          newAssigneeId: finalAssignedToId,
           changedBy: req.user?.email || 'Admin',
         },
       });
 
       // Notify Assignee
-      if (task.assignedTo.userRefId) {
+      if (task.assignedTo?.userRefId) {
         await NotificationService.sendNotification({
           userId: task.assignedTo.userRefId,
           type: 'task_assigned',
@@ -98,7 +111,7 @@ export class TaskController {
         action: 'TASK_CREATED',
         entityType: 'Task',
         entityId: task.id,
-        metadata: { title: task.title, assignedTo: task.assignedTo.name },
+        metadata: { title: task.title, assignedTo: task.assignedTo?.name },
       });
 
       return ApiResponse.success(res, task, 'Task created successfully', 201);
@@ -145,11 +158,22 @@ export class TaskController {
         return ApiResponse.error(res, 'Task not found', 404);
       }
 
+      const targetEmp = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { id: newAssigneeId },
+            { employeeCode: newAssigneeId },
+            { userId: newAssigneeId },
+          ],
+        },
+      });
+
+      const finalNewAssigneeId = targetEmp ? targetEmp.id : newAssigneeId;
       const previousAssigneeId = existingTask.assignedToId;
 
       const updated = await prisma.task.update({
         where: { id },
-        data: { assignedToId: newAssigneeId },
+        data: { assignedToId: finalNewAssigneeId },
         include: { assignedTo: { include: { user: true } } },
       });
 
@@ -158,7 +182,7 @@ export class TaskController {
         data: {
           taskId: id,
           previousAssigneeId,
-          newAssigneeId,
+          newAssigneeId: finalNewAssigneeId,
           changedBy: req.user?.email || 'Admin',
         },
       });

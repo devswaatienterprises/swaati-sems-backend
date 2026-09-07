@@ -208,14 +208,17 @@ export class AttendanceController {
   static async correct(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      const { status, notes } = req.body;
+      const { status, notes, attendanceStatus, correctionReason } = req.body;
+
+      const finalStatus = status || attendanceStatus;
+      const finalNotes = notes || correctionReason;
 
       const updated = await prisma.attendance.update({
         where: { id },
         data: {
-          attendanceStatus: status as AttendanceStatus,
+          attendanceStatus: finalStatus as AttendanceStatus,
           correctedBy: req.user?.email,
-          correctionReason: notes,
+          correctionReason: finalNotes,
         },
         include: { employee: true },
       });
@@ -226,7 +229,7 @@ export class AttendanceController {
         action: 'ATTENDANCE_CORRECTED',
         entityType: 'Attendance',
         entityId: id,
-        metadata: { employeeName: updated.employee.name, status, notes },
+        metadata: { employeeName: updated.employee.name, status: finalStatus, notes: finalNotes },
       });
 
       return ApiResponse.success(res, updated, 'Attendance record updated by Administrator');

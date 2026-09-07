@@ -65,6 +65,20 @@ export class LeadController {
       const allowedSources = ['call', 'walkin', 'whatsapp', 'email', 'referral', 'other', 'website'];
       const finalSource = allowedSources.includes(source?.toLowerCase()) ? source : 'call';
 
+      let finalAssignedToId = assignedToId;
+      if (assignedToId) {
+        const targetEmp = await prisma.employee.findFirst({
+          where: {
+            OR: [
+              { id: assignedToId },
+              { employeeCode: assignedToId },
+              { userId: assignedToId },
+            ],
+          },
+        });
+        if (targetEmp) finalAssignedToId = targetEmp.id;
+      }
+
       const lead = await prisma.lead.create({
         data: {
           leadCode,
@@ -78,7 +92,7 @@ export class LeadController {
           source: finalSource,
           leadAddedBy,
           priority: (priority?.toUpperCase() as Priority) || Priority.MEDIUM,
-          assignedToId,
+          assignedToId: finalAssignedToId,
           assignedById: currentEmpId,
           followUpDate: followUpDate ? new Date(followUpDate) : null,
           notes,
@@ -134,10 +148,24 @@ export class LeadController {
       const { id } = req.params;
       const { assignedToId, followUpDate, notes, priority } = req.body;
 
+      let finalAssignedToId = assignedToId;
+      if (assignedToId) {
+        const targetEmp = await prisma.employee.findFirst({
+          where: {
+            OR: [
+              { id: assignedToId },
+              { employeeCode: assignedToId },
+              { userId: assignedToId },
+            ],
+          },
+        });
+        if (targetEmp) finalAssignedToId = targetEmp.id;
+      }
+
       const lead = await prisma.lead.update({
         where: { id },
         data: {
-          assignedToId,
+          assignedToId: finalAssignedToId,
           followUpDate: followUpDate ? new Date(followUpDate) : undefined,
           notes,
           priority: priority ? (priority.toUpperCase() as Priority) : undefined,
