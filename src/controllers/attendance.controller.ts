@@ -6,22 +6,32 @@ import { AttendanceStatus, RoleType } from '../types/crm.types';
 import { formatTimeIST, getISTDateMidnight } from '../utils/timezone';
 import { AuditService } from '../services/audit.service';
 import { NotificationService } from '../services/notification.service';
+import { buildVerificationPayload, GPSInput } from '../utils/verificationHelper';
 
 export class AttendanceController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
       const { date, employeeId, department } = req.query;
       const userRole = req.user?.role;
-      const currentEmployeeId = req.user?.employeeId;
+      let currentEmployeeId = req.user?.employeeId;
+      if (!currentEmployeeId && req.user?.id) {
+        const emp = await prisma.employee.findFirst({
+          where: {
+            OR: [{ userId: req.user.id }, { email: req.user.email }],
+          },
+        });
+        if (emp) currentEmployeeId = emp.id;
+      }
+
       const canViewTeam = userRole === RoleType.ADMIN || Boolean(req.user?.permissions?.['attendance.view_team']);
 
       const whereClause: any = {};
       if (date) {
-        whereClause.attendanceDate = new Date(date as string);
+        whereClause.attendanceDate = getISTDateMidnight(new Date(date as string));
       }
 
       if (!canViewTeam) {
-        whereClause.employeeId = currentEmployeeId;
+        whereClause.employeeId = currentEmployeeId || 'none';
       } else if (employeeId) {
         whereClause.employeeId = employeeId as string;
       }
@@ -35,6 +45,7 @@ export class AttendanceController {
         include: {
           employee: {
             select: {
+              id: true,
               name: true,
               employeeCode: true,
               department: true,
@@ -53,7 +64,16 @@ export class AttendanceController {
 
   static async checkIn(req: AuthRequest, res: Response) {
     try {
-      const employeeId = req.user?.employeeId;
+      let employeeId = req.user?.employeeId;
+      if (!employeeId && req.user?.id) {
+        const emp = await prisma.employee.findFirst({
+          where: {
+            OR: [{ userId: req.user.id }, { email: req.user.email }],
+          },
+        });
+        if (emp) employeeId = emp.id;
+      }
+
       if (!employeeId) {
         return ApiResponse.error(res, 'No active employee profile associated with your user session.', 400);
       }
@@ -61,6 +81,19 @@ export class AttendanceController {
       const now = new Date();
       const todayDate = getISTDateMidnight(now);
       const currentTimeStr = formatTimeIST(now);
+
+      // Auto-close any unclosed attendance sessions from previous calendar days permanently
+      await prisma.attendance.updateMany({
+        where: {
+          employeeId,
+          attendanceDate: { lt: todayDate },
+          checkOut: '-',
+        },
+        data: {
+          checkOut: 'Auto-Closed (Day Ended)',
+          workingHours: 'Closed',
+        },
+      });
 
       // Check if attendance already recorded today
       const existing = await prisma.attendance.findUnique({
@@ -73,7 +106,7 @@ export class AttendanceController {
       });
 
       if (existing) {
-        return ApiResponse.error(res, 'You have already checked in for today.', 400);
+        return ApiResponse.error(res, 'You have already checked in for today. Each employee can only check in once per calendar day.', 400);
       }
 
       // Read configurable office start time
@@ -113,6 +146,40 @@ export class AttendanceController {
       const isLate = diff > gracePeriodMinutes;
       const lateMinutes = isLate ? diff : 0;
 
+      // ---- VERIFICATION ----
+      // Fetch employee's verification configuration
+      const employeeConfig = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: {
+          attendanceVerification: true,
+          approvedIPs: true,
+          approvedLat: true,
+          approvedLng: true,
+          approvedRadiusMeters: true,
+        },
+      });
+
+      const gpsInput: GPSInput = {
+        lat: req.body.gpsLat != null ? parseFloat(req.body.gpsLat) : null,
+        lng: req.body.gpsLng != null ? parseFloat(req.body.gpsLng) : null,
+        accuracy: req.body.gpsAccuracy != null ? parseFloat(req.body.gpsAccuracy) : null,
+        capturedAt: req.body.gpsCapturedAt || null,
+        unavailable: Boolean(req.body.gpsUnavailable),
+      };
+
+      const verificationPayload = buildVerificationPayload(
+        employeeConfig?.attendanceVerification || 'NONE',
+        req,
+        gpsInput,
+        {
+          approvedIPs: employeeConfig?.approvedIPs,
+          approvedLat: employeeConfig?.approvedLat,
+          approvedLng: employeeConfig?.approvedLng,
+          approvedRadiusMeters: employeeConfig?.approvedRadiusMeters,
+        }
+      );
+      // ---- END VERIFICATION ----
+
       const record = await prisma.attendance.create({
         data: {
           employeeId,
@@ -124,6 +191,18 @@ export class AttendanceController {
           attendanceStatus: isLate ? AttendanceStatus.LATE : AttendanceStatus.PRESENT,
           isLate,
           lateMinutes,
+          checkInVerification: JSON.stringify(verificationPayload),
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              employeeCode: true,
+              department: true,
+              designation: true,
+            },
+          },
         },
       });
 
@@ -141,13 +220,25 @@ export class AttendanceController {
 
       return ApiResponse.success(res, record, 'Check-in recorded successfully', 201);
     } catch (err: any) {
+      if (err.code === 'P2002' || err.message?.includes('Unique constraint') || err.message?.includes('employeeId_attendanceDate')) {
+        return ApiResponse.error(res, 'You have already checked in for today. Each employee can only check in once per calendar day.', 400);
+      }
       return ApiResponse.error(res, err.message, 500);
     }
   }
 
   static async checkOut(req: AuthRequest, res: Response) {
     try {
-      const employeeId = req.user?.employeeId;
+      let employeeId = req.user?.employeeId;
+      if (!employeeId && req.user?.id) {
+        const emp = await prisma.employee.findFirst({
+          where: {
+            OR: [{ userId: req.user.id }, { email: req.user.email }],
+          },
+        });
+        if (emp) employeeId = emp.id;
+      }
+
       const currentUserId = req.user?.id;
       if (!employeeId) {
         return ApiResponse.error(res, 'No active employee profile associated with your user session.', 400);
@@ -171,7 +262,7 @@ export class AttendanceController {
       }
 
       if (attendanceRecord.checkOut !== '-') {
-        return ApiResponse.error(res, 'You have already checked out for today.', 400);
+        return ApiResponse.error(res, "You have already checked out for today. Today's attendance is closed.", 400);
       }
 
       // Check for incomplete tasks assigned to this employee with deadline of today or earlier
@@ -339,12 +430,57 @@ export class AttendanceController {
       const durationMinutes = Math.max(0, outTotalMins - inTotalMins);
       const durationHours = (durationMinutes / 60).toFixed(1);
 
+      // ---- CHECKOUT VERIFICATION ----
+      const empConfigOut = await prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: {
+          attendanceVerification: true,
+          approvedIPs: true,
+          approvedLat: true,
+          approvedLng: true,
+          approvedRadiusMeters: true,
+        },
+      });
+
+      const gpsInputOut: GPSInput = {
+        lat: req.body.gpsLat != null ? parseFloat(req.body.gpsLat) : null,
+        lng: req.body.gpsLng != null ? parseFloat(req.body.gpsLng) : null,
+        accuracy: req.body.gpsAccuracy != null ? parseFloat(req.body.gpsAccuracy) : null,
+        capturedAt: req.body.gpsCapturedAt || null,
+        unavailable: Boolean(req.body.gpsUnavailable),
+      };
+
+      const checkOutVerificationPayload = buildVerificationPayload(
+        empConfigOut?.attendanceVerification || 'NONE',
+        req,
+        gpsInputOut,
+        {
+          approvedIPs: empConfigOut?.approvedIPs,
+          approvedLat: empConfigOut?.approvedLat,
+          approvedLng: empConfigOut?.approvedLng,
+          approvedRadiusMeters: empConfigOut?.approvedRadiusMeters,
+        }
+      );
+      // ---- END CHECKOUT VERIFICATION ----
+
       const updated = await prisma.attendance.update({
         where: { id: attendanceRecord.id },
         data: {
           checkOut: currentTimeStr,
           workingMinutes: durationMinutes,
           workingHours: `${durationHours} hrs`,
+          checkOutVerification: JSON.stringify(checkOutVerificationPayload),
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              employeeCode: true,
+              department: true,
+              designation: true,
+            },
+          },
         },
       });
 
@@ -356,32 +492,96 @@ export class AttendanceController {
 
   static async correct(req: AuthRequest, res: Response) {
     try {
+      if (req.user?.role !== RoleType.ADMIN) {
+        return ApiResponse.error(res, 'Access denied. Only Administrators can correct attendance records.', 403);
+      }
+
       const { id } = req.params;
       const { status, notes, attendanceStatus, correctionReason } = req.body;
 
       const finalStatus = status || attendanceStatus;
-      const finalNotes = notes || correctionReason;
+      const finalReason = (correctionReason || notes || '').trim();
+
+      if (!finalStatus) {
+        return ApiResponse.error(res, 'Adjusted status is required.', 400);
+      }
+
+      if (!finalReason) {
+        return ApiResponse.error(res, 'Reason for correction (Audit Log) is required.', 400);
+      }
+
+      const existing = await prisma.attendance.findUnique({
+        where: { id },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              employeeCode: true,
+              department: true,
+              designation: true,
+            },
+          },
+        },
+      });
+
+      if (!existing) {
+        return ApiResponse.error(res, 'Attendance record not found.', 404);
+      }
+
+      // Preserve originalStatus from first record if previously uncorrected
+      const originalStatus = existing.originalStatus || existing.attendanceStatus;
+      const correctedAt = new Date();
+
+      // Resolve Admin display name
+      const adminUser = req.user?.id
+        ? await prisma.user.findUnique({
+            where: { id: req.user.id },
+            include: { employee: true },
+          })
+        : null;
+      const adminName = adminUser?.employee?.name || adminUser?.email || req.user?.email || 'Administrator';
 
       const updated = await prisma.attendance.update({
         where: { id },
         data: {
           attendanceStatus: finalStatus as AttendanceStatus,
-          correctedBy: req.user?.email,
-          correctionReason: finalNotes,
+          originalStatus,
+          correctedBy: adminName,
+          correctionReason: finalReason,
+          correctedAt,
         },
-        include: { employee: true },
+        include: {
+          employee: {
+            select: {
+              name: true,
+              employeeCode: true,
+              department: true,
+              designation: true,
+            },
+          },
+        },
       });
 
-      // Audit Log
+      // Audit Log with comprehensive details
       await AuditService.log({
         actorUserId: req.user?.id,
         action: 'ATTENDANCE_CORRECTED',
         entityType: 'Attendance',
         entityId: id,
-        metadata: { employeeName: updated.employee.name, status: finalStatus, notes: finalNotes },
+        metadata: {
+          employeeId: existing.employee.employeeCode || existing.employeeId,
+          employeeName: existing.employee.name,
+          attendanceDate: existing.attendanceDate,
+          originalStatus,
+          correctedStatus: finalStatus,
+          correctionReason: finalReason,
+          correctedBy: adminName,
+          correctedAt: correctedAt.toISOString(),
+        },
       });
 
-      return ApiResponse.success(res, updated, 'Attendance record updated by Administrator');
+      return ApiResponse.success(res, updated, 'Attendance record corrected successfully by Administrator');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }

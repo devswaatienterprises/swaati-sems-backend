@@ -74,6 +74,13 @@ model Employee {
   userRefId        String?              @unique @map("user_ref_id")
   user             User?                @relation(fields: [userRefId], references: [id], onDelete: SetNull)
 
+  // Attendance Verification Configuration (Admin-configurable)
+  attendanceVerification String  @default("NONE") @map("attendance_verification") // NONE | OFFICE_IP | MOBILE_GPS | HYBRID
+  approvedIPs            String? @map("approved_ips")           // comma-separated public IPs e.g. "203.0.113.1,203.0.113.5"
+  approvedLat            Float?  @map("approved_lat")           // office GPS latitude
+  approvedLng            Float?  @map("approved_lng")           // office GPS longitude
+  approvedRadiusMeters   Int     @default(200) @map("approved_radius_meters") // allowed GPS radius in metres
+
   documents        EmployeeDocument[]
   attendances      Attendance[]
   leaveRequests    LeaveRequest[]
@@ -125,8 +132,15 @@ model Attendance {
   isLate           Boolean  @default(false) @map("is_late")
   lateMinutes      Int      @default(0) @map("late_minutes")
   notes            String?
+  originalStatus   String?  @map("original_status")
   correctedBy      String?  @map("corrected_by")
   correctionReason String?  @map("correction_reason")
+  correctedAt      DateTime? @map("corrected_at")
+
+  // Attendance Verification Capture (stored as JSON string per check-in/check-out event)
+  checkInVerification  String? @map("check_in_verification")   // JSON: { method, ip, lat, lng, accuracy, result, reason, capturedAt }
+  checkOutVerification String? @map("check_out_verification")  // JSON: same shape
+
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

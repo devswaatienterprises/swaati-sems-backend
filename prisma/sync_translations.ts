@@ -1127,6 +1127,14 @@ export const MASTER_TRANSLATIONS: TranslationSeedItem[] = [
     marathi: 'परवानग्या आणि सिस्टम ऍक्सेस',
     hindi: 'अनुमतियां एवं सिस्टम पहुंच',
   },
+  {
+    alias: 'employees.profile.tab_activity',
+    module: 'employees',
+    description: 'Activity History tab in profile',
+    english: 'Activity History',
+    marathi: 'कार्यकलाप इतिहास',
+    hindi: 'गतिविधि इतिहास',
+  },
 
   // =========================================================================
   // 6. ATTENDANCE & SHIFT LOGS (crm/app/attendance/page.jsx, EndOfDayTaskModal)

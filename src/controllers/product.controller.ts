@@ -27,20 +27,28 @@ export class ProductController {
     try {
       const { name, category, brand, productType, subcategory } = req.body;
 
-      if (!name || !category || !brand) {
-        return ApiResponse.error(res, 'Name, category, and brand are required', 400);
+      if (!name || !name.trim() || !category || !category.trim()) {
+        return ApiResponse.error(res, 'Product Name and Category are required', 400);
       }
 
-      const productCode = await SequenceService.getNextProductCode();
+      let productCode = req.body.productCode ? req.body.productCode.trim().toUpperCase() : null;
+      if (productCode) {
+        const existing = await prisma.product.findUnique({ where: { productCode } });
+        if (existing) {
+          return ApiResponse.error(res, `Product code "${productCode}" is already in use. Please enter a unique product code.`, 409);
+        }
+      } else {
+        productCode = await SequenceService.getNextProductCode();
+      }
 
       const product = await prisma.product.create({
         data: {
           productCode,
-          name,
-          category,
-          brand,
-          productType,
-          subcategory,
+          name: name.trim(),
+          category: category.trim(),
+          brand: (brand || 'Swaati Enterprises').trim(),
+          productType: productType ? productType.trim() : null,
+          subcategory: subcategory ? subcategory.trim() : null,
           status: 'Active',
         },
       });
@@ -56,6 +64,9 @@ export class ProductController {
 
       return ApiResponse.success(res, product, 'Product added to library', 201);
     } catch (err: any) {
+      if (err.code === 'P2002') {
+        return ApiResponse.error(res, 'A product with this product code already exists.', 409);
+      }
       return ApiResponse.error(res, err.message, 500);
     }
   }

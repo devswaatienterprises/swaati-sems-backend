@@ -24,6 +24,7 @@ export class LeaveController {
         include: {
           employee: {
             select: {
+              id: true,
               name: true,
               employeeCode: true,
               department: true,
@@ -93,7 +94,17 @@ export class LeaveController {
           status: LeaveStatus.PENDING,
           appliedAt: new Date(),
         },
-        include: { employee: true },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              employeeCode: true,
+              department: true,
+              designation: true,
+            },
+          },
+        },
       });
 
       // Notify Admins
@@ -116,8 +127,21 @@ export class LeaveController {
       const { id } = req.params;
       const { status, reviewerRemarks } = req.body; // 'APPROVED' | 'REJECTED'
 
+      const existing = await prisma.leaveRequest.findFirst({
+        where: {
+          OR: [
+            { id },
+            { leaveCode: id },
+          ],
+        },
+      });
+
+      if (!existing) {
+        return ApiResponse.error(res, 'Leave request not found', 404);
+      }
+
       const leave = await prisma.leaveRequest.update({
-        where: { id },
+        where: { id: existing.id },
         data: {
           status: status as LeaveStatus,
           reviewerRemarks,
@@ -135,7 +159,7 @@ export class LeaveController {
           title: `Leave Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
           message: `Your leave request for ${leave.startDate.toISOString().split('T')[0]} has been ${status.toLowerCase()}.${reviewerRemarks ? ` Remarks: ${reviewerRemarks}` : ''}`,
           relatedType: 'LeaveRequest',
-          relatedId: id,
+          relatedId: existing.id,
         });
       }
 
@@ -144,7 +168,7 @@ export class LeaveController {
         actorUserId: req.user?.id,
         action: `LEAVE_${status}`,
         entityType: 'LeaveRequest',
-        entityId: id,
+        entityId: existing.id,
         metadata: { employeeName: leave.employee.name, status, reviewerRemarks },
       });
 
@@ -159,8 +183,13 @@ export class LeaveController {
       const { id } = req.params;
       const employeeId = req.user?.employeeId;
 
-      const leave = await prisma.leaveRequest.findUnique({
-        where: { id },
+      const leave = await prisma.leaveRequest.findFirst({
+        where: {
+          OR: [
+            { id },
+            { leaveCode: id },
+          ],
+        },
       });
 
       if (!leave) {
@@ -176,7 +205,7 @@ export class LeaveController {
       }
 
       const updated = await prisma.leaveRequest.update({
-        where: { id },
+        where: { id: leave.id },
         data: {
           status: LeaveStatus.CANCELLED,
           cancelledAt: new Date(),

@@ -77,6 +77,12 @@ router.delete(
   authorize([RoleType.ADMIN]),
   EmployeeController.deleteDocument
 );
+router.patch(
+  '/employees/:id/verification',
+  authenticate,
+  authorize([RoleType.ADMIN]),
+  EmployeeController.updateVerification
+);
 
 // ==========================================
 // 4. ATTENDANCE & SHIFTS
@@ -84,7 +90,7 @@ router.delete(
 router.get('/attendance', authenticate, requirePermission('attendance.view_own', 'attendance'), AttendanceController.getAll);
 router.post('/attendance/check-in', authenticate, requirePermission('attendance.checkin', 'attendance'), AttendanceController.checkIn);
 router.post('/attendance/check-out', authenticate, requirePermission('attendance.checkin', 'attendance'), AttendanceController.checkOut);
-router.patch('/attendance/:id/correct', authenticate, requirePermission('attendance.approve', 'attendance'), AttendanceController.correct);
+router.patch('/attendance/:id/correct', authenticate, authorize([RoleType.ADMIN]), AttendanceController.correct);
 
 // ==========================================
 // 5. LEAVE MANAGEMENT

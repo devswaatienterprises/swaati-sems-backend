@@ -78,6 +78,11 @@ export class AuditController {
         return ApiResponse.error(res, 'Employee not found', 404);
       }
 
+      // Regular employees must NOT be able to view another employee's activity history
+      if (req.user?.role !== 'ADMIN') {
+        return ApiResponse.error(res, 'Forbidden: Only administrators can view employee activity history', 403);
+      }
+
       const orConditions: any[] = [];
       if (emp.userId) {
         orConditions.push({ actorUserId: emp.userId });

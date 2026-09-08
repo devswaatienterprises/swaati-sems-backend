@@ -165,6 +165,11 @@ export class EmployeeController {
             active: true,
             avatar: name.split(' ').map((n: string) => n[0]).join('').toUpperCase(),
             userRefId: newUser.id,
+            attendanceVerification: req.body.attendanceVerification || 'NONE',
+            approvedIPs: req.body.approvedIPs || null,
+            approvedLat: req.body.approvedLat != null ? parseFloat(req.body.approvedLat) : null,
+            approvedLng: req.body.approvedLng != null ? parseFloat(req.body.approvedLng) : null,
+            approvedRadiusMeters: req.body.approvedRadiusMeters != null ? parseInt(req.body.approvedRadiusMeters, 10) : 200,
           },
         });
 
@@ -210,17 +215,40 @@ export class EmployeeController {
         designation,
         reportingManager,
         role,
+        attendanceVerification,
+        approvedIPs,
+        approvedLat,
+        approvedLng,
+        approvedRadiusMeters,
       } = req.body;
+
+      const employeeUpdateData: any = {
+        name,
+        mobile,
+        department,
+        designation,
+        reportingManager,
+      };
+
+      if (attendanceVerification !== undefined) {
+        employeeUpdateData.attendanceVerification = attendanceVerification;
+      }
+      if (approvedIPs !== undefined) {
+        employeeUpdateData.approvedIPs = approvedIPs || null;
+      }
+      if (approvedLat !== undefined) {
+        employeeUpdateData.approvedLat = approvedLat != null ? parseFloat(approvedLat) : null;
+      }
+      if (approvedLng !== undefined) {
+        employeeUpdateData.approvedLng = approvedLng != null ? parseFloat(approvedLng) : null;
+      }
+      if (approvedRadiusMeters !== undefined) {
+        employeeUpdateData.approvedRadiusMeters = approvedRadiusMeters != null ? parseInt(approvedRadiusMeters, 10) : 200;
+      }
 
       const updated = await prisma.employee.update({
         where: { id },
-        data: {
-          name,
-          mobile,
-          department,
-          designation,
-          reportingManager,
-        },
+        data: employeeUpdateData,
         include: { user: true },
       });
 
@@ -235,6 +263,62 @@ export class EmployeeController {
       }
 
       return ApiResponse.success(res, updated, 'Employee profile updated');
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async updateVerification(req: AuthRequest, res: Response) {
+    try {
+      // Admin-only — enforced at route level with authorize([RoleType.ADMIN])
+      const { id } = req.params;
+      const {
+        attendanceVerification,
+        approvedIPs,
+        approvedLat,
+        approvedLng,
+        approvedRadiusMeters,
+      } = req.body;
+
+      const validMethods = ['NONE', 'OFFICE_IP', 'MOBILE_GPS', 'HYBRID'];
+      if (attendanceVerification && !validMethods.includes(attendanceVerification)) {
+        return ApiResponse.error(res, `Invalid verification method. Must be one of: ${validMethods.join(', ')}`, 400);
+      }
+
+      const updateData: any = {};
+      if (attendanceVerification !== undefined) updateData.attendanceVerification = attendanceVerification;
+      if (approvedIPs !== undefined) updateData.approvedIPs = approvedIPs || null;
+      if (approvedLat !== undefined) updateData.approvedLat = approvedLat != null ? parseFloat(approvedLat) : null;
+      if (approvedLng !== undefined) updateData.approvedLng = approvedLng != null ? parseFloat(approvedLng) : null;
+      if (approvedRadiusMeters !== undefined) updateData.approvedRadiusMeters = approvedRadiusMeters != null ? parseInt(approvedRadiusMeters, 10) : 200;
+
+      const updated = await prisma.employee.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          employeeCode: true,
+          attendanceVerification: true,
+          approvedIPs: true,
+          approvedLat: true,
+          approvedLng: true,
+          approvedRadiusMeters: true,
+        },
+      });
+
+      await AuditService.log({
+        actorUserId: req.user?.id,
+        action: 'EMPLOYEE_VERIFICATION_UPDATED',
+        entityType: 'Employee',
+        entityId: id,
+        metadata: {
+          method: attendanceVerification,
+          updatedBy: req.user?.email || 'Admin',
+        },
+      });
+
+      return ApiResponse.success(res, updated, 'Attendance verification configuration updated');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }

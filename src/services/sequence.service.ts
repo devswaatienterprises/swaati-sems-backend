@@ -35,18 +35,31 @@ export class SequenceService {
 
   /**
    * Concurrency-safe Task code generator (TSK-001, TSK-002, ...)
-   * Uses atomic PostgreSQL sequence.
+   * Strictly sequential based on creation order using atomic PostgreSQL sequence.
    */
   static async getNextTaskCode(): Promise<string> {
     const seqName = 'task_code_seq';
     await prisma.$executeRawUnsafe(
       `CREATE SEQUENCE IF NOT EXISTS ${seqName} START WITH 1 INCREMENT BY 1;`
     );
-    const [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
+
+    let [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
       `SELECT nextval('${seqName}') as nextval;`
     );
-    const num = Number(result.nextval);
-    return `TSK-${String(num).padStart(3, '0')}`;
+    let num = Number(result.nextval);
+
+    let candidate = `TSK-${String(num).padStart(3, '0')}`;
+    let exists = await prisma.task.findUnique({ where: { taskCode: candidate } });
+    while (exists) {
+      [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
+        `SELECT nextval('${seqName}') as nextval;`
+      );
+      num = Number(result.nextval);
+      candidate = `TSK-${String(num).padStart(3, '0')}`;
+      exists = await prisma.task.findUnique({ where: { taskCode: candidate } });
+    }
+
+    return candidate;
   }
 
   /**
@@ -74,11 +87,23 @@ export class SequenceService {
     await prisma.$executeRawUnsafe(
       `CREATE SEQUENCE IF NOT EXISTS ${seqName} START WITH 1 INCREMENT BY 1;`
     );
-    const [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
+    let [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
       `SELECT nextval('${seqName}') as nextval;`
     );
-    const num = Number(result.nextval);
-    return `PROD-${String(num).padStart(3, '0')}`;
+    let num = Number(result.nextval);
+
+    let candidate = `PROD-${String(num).padStart(3, '0')}`;
+    let exists = await prisma.product.findUnique({ where: { productCode: candidate } });
+    while (exists) {
+      [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
+        `SELECT nextval('${seqName}') as nextval;`
+      );
+      num = Number(result.nextval);
+      candidate = `PROD-${String(num).padStart(3, '0')}`;
+      exists = await prisma.product.findUnique({ where: { productCode: candidate } });
+    }
+
+    return candidate;
   }
 
   /**
