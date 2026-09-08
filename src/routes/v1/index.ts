@@ -186,14 +186,9 @@ router.patch('/settings', authenticate, authorize([RoleType.ADMIN]), SettingCont
 router.get('/audit', authenticate, authorize([RoleType.ADMIN]), AuditController.getAll);
 
 // ==========================================
-// 14. CONTENT & TRANSLATION MANAGEMENT LAYER
+// 14. CONTENT & RUNTIME TRANSLATION LAYER
 // ==========================================
 router.get('/content/bundle', ContentController.getBundle);
 router.get('/content/languages', ContentController.getLanguages);
-router.get('/content/items', authenticate, authorize([RoleType.ADMIN]), ContentController.getItems);
-router.put('/content/row', authenticate, authorize([RoleType.ADMIN]), ContentController.updateRow);
-router.post('/content/items', authenticate, authorize([RoleType.ADMIN]), ContentController.createItem);
-router.post('/content/import-csv', authenticate, authorize([RoleType.ADMIN]), ContentController.importCsv);
-router.put('/content/items/:id/alias', authenticate, authorize([RoleType.ADMIN]), ContentController.updateAlias);
 
 export default router;

@@ -487,3 +487,21 @@ model ContentVersion {
   @@map("content_versions")
 }
 
+// ----------------------------------------------------
+// 15. TRANSLATIONS MANAGEMENT (Direct Supabase Table View: One Row Per Alias)
+// ----------------------------------------------------
+model TranslationManagement {
+  id          String   @id @default(uuid())
+  alias       String   @unique
+  english     String   @default("")
+  marathi     String   @default("")
+  hindi       String   @default("")
+  module      String   @default("global")
+  description String?
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([alias])
+  @@index([module])
+  @@map("translations_management")
+}

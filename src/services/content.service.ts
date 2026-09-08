@@ -4,70 +4,45 @@ import { AuditService } from './audit.service';
 export class ContentService {
   /**
    * Retrieve a key-value translation bundle for a requested language and optional module.
-   * Implements fallback hierarchy: Requested Language (published) -> Default Language 'en' (published) -> Content Key
+   * Reads directly from the single-source 'translations_management' table in Supabase.
+   * Implements fallback: Target Language (mr/hi) -> Default Language (en) -> Alias Key
    */
   static async getBundle(langCode: string = 'en', moduleFilter?: string) {
     try {
-      // 1. Resolve target language and default fallback language
-      const targetLang = await prisma.language.findUnique({
-        where: { code: langCode.toLowerCase() },
-      });
-
-      const defaultLang = await prisma.language.findFirst({
-        where: { isDefault: true, isEnabled: true },
-      }) || await prisma.language.findFirst({
-        where: { code: 'en' },
-      });
-
-      const whereClause: any = { isActive: true };
+      const normalizedLang = (langCode || 'en').toLowerCase();
+      const whereClause: any = {};
       if (moduleFilter && moduleFilter !== 'all') {
         whereClause.module = moduleFilter;
       }
 
-      // 2. Fetch all active content items with their published translations
-      const contentItems = await prisma.contentItem.findMany({
+      const items = await prisma.translationManagement.findMany({
         where: whereClause,
-        include: {
-          translations: {
-            where: { status: 'published' },
-            include: { language: true },
-          },
-        },
+        orderBy: [{ module: 'asc' }, { alias: 'asc' }],
       });
 
-      // 3. Assemble dictionary with fallback logic
       const bundle: Record<string, string> = {};
 
-      for (const item of contentItems) {
-        const translations = item.translations || [];
-
-        // Try requested language first
-        const targetTranslation = targetLang
-          ? translations.find((t) => t.languageId === targetLang.id)
-          : null;
-
-        if (targetTranslation && targetTranslation.value) {
-          bundle[item.contentKey] = targetTranslation.value;
-          continue;
+      for (const item of items) {
+        let value = '';
+        if (normalizedLang === 'mr') {
+          value = item.marathi?.trim() || item.english?.trim() || item.alias;
+        } else if (normalizedLang === 'hi') {
+          value = item.hindi?.trim() || item.english?.trim() || item.alias;
+        } else {
+          value = item.english?.trim() || item.alias;
         }
-
-        // Fallback to default language ('en')
-        const defaultTranslation = defaultLang
-          ? translations.find((t) => t.languageId === defaultLang.id)
-          : null;
-
-        if (defaultTranslation && defaultTranslation.value) {
-          bundle[item.contentKey] = defaultTranslation.value;
-          continue;
-        }
-
-        // Ultimate fallback: contentKey itself
-        bundle[item.contentKey] = item.contentKey;
+        bundle[item.alias] = value;
       }
 
+      const langNames: Record<string, string> = {
+        en: 'English',
+        mr: 'मराठी',
+        hi: 'हिंदी',
+      };
+
       return {
-        language: targetLang ? targetLang.code : (defaultLang?.code || 'en'),
-        languageName: targetLang ? targetLang.name : (defaultLang?.name || 'English'),
+        language: normalizedLang,
+        languageName: langNames[normalizedLang] || 'English',
         totalKeys: Object.keys(bundle).length,
         bundle,
       };
@@ -83,13 +58,14 @@ export class ContentService {
   }
 
   /**
-   * Get all enabled languages
+   * Get all supported languages
    */
   static async getLanguages() {
-    return await prisma.language.findMany({
-      where: { isEnabled: true },
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-    });
+    return [
+      { code: 'en', name: 'English', isDefault: true, isEnabled: true },
+      { code: 'mr', name: 'मराठी', isDefault: false, isEnabled: true },
+      { code: 'hi', name: 'हिंदी', isDefault: false, isEnabled: true },
+    ];
   }
 
   /**
