@@ -11,10 +11,14 @@ export class TaskController {
     try {
       const userRole = req.user?.role;
       const employeeId = req.user?.employeeId;
+      const canViewTeam = userRole === RoleType.ADMIN || Boolean(req.user?.permissions?.['tasks.view_team']);
 
       const whereClause: any = {};
-      if (userRole !== RoleType.ADMIN) {
-        whereClause.assignedToId = employeeId;
+      if (!canViewTeam) {
+        whereClause.OR = [
+          { assignedToId: employeeId },
+          { assignedById: employeeId },
+        ];
       }
 
       const tasks = await prisma.task.findMany({

@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { prisma } from '../config/db';
 import { ApiResponse } from '../utils/apiResponse';
 import { AuthRequest } from '../middleware/auth';
-import { AttendanceStatus } from '../types/crm.types';
+import { AttendanceStatus, RoleType } from '../types/crm.types';
 import { formatTimeIST, getISTDateMidnight } from '../utils/timezone';
 import { AuditService } from '../services/audit.service';
 import { NotificationService } from '../services/notification.service';
@@ -11,14 +11,21 @@ export class AttendanceController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
       const { date, employeeId, department } = req.query;
+      const userRole = req.user?.role;
+      const currentEmployeeId = req.user?.employeeId;
+      const canViewTeam = userRole === RoleType.ADMIN || Boolean(req.user?.permissions?.['attendance.view_team']);
 
       const whereClause: any = {};
       if (date) {
         whereClause.attendanceDate = new Date(date as string);
       }
-      if (employeeId) {
+
+      if (!canViewTeam) {
+        whereClause.employeeId = currentEmployeeId;
+      } else if (employeeId) {
         whereClause.employeeId = employeeId as string;
       }
+
       if (department && department !== 'ALL') {
         whereClause.employee = { department: department as string };
       }

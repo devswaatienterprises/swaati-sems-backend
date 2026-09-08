@@ -11,9 +11,10 @@ export class LeaveController {
     try {
       const userRole = req.user?.role;
       const employeeId = req.user?.employeeId;
+      const canViewTeam = userRole === RoleType.ADMIN || Boolean(req.user?.permissions?.['leave.view_team']);
 
       const whereClause: any = {};
-      if (userRole !== RoleType.ADMIN) {
+      if (!canViewTeam) {
         whereClause.employeeId = employeeId;
       }
 

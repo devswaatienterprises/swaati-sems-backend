@@ -80,45 +80,45 @@ router.delete(
 // ==========================================
 // 4. ATTENDANCE & SHIFTS
 // ==========================================
-router.get('/attendance', authenticate, requirePermission('attendance'), AttendanceController.getAll);
-router.post('/attendance/check-in', authenticate, requirePermission('attendance'), AttendanceController.checkIn);
-router.post('/attendance/check-out', authenticate, requirePermission('attendance'), AttendanceController.checkOut);
-router.patch('/attendance/:id/correct', authenticate, authorize([RoleType.ADMIN]), AttendanceController.correct);
+router.get('/attendance', authenticate, requirePermission('attendance.view_own', 'attendance'), AttendanceController.getAll);
+router.post('/attendance/check-in', authenticate, requirePermission('attendance.checkin', 'attendance'), AttendanceController.checkIn);
+router.post('/attendance/check-out', authenticate, requirePermission('attendance.checkin', 'attendance'), AttendanceController.checkOut);
+router.patch('/attendance/:id/correct', authenticate, requirePermission('attendance.approve', 'attendance'), AttendanceController.correct);
 
 // ==========================================
 // 5. LEAVE MANAGEMENT
 // ==========================================
-router.get('/leaves', authenticate, requirePermission('leave'), LeaveController.getAll);
-router.post('/leaves', authenticate, requirePermission('leave'), LeaveController.create);
-router.patch('/leaves/:id/status', authenticate, authorize([RoleType.ADMIN]), LeaveController.updateStatus);
-router.post('/leaves/:id/cancel', authenticate, requirePermission('leave'), LeaveController.cancel);
+router.get('/leaves', authenticate, requirePermission('leave.view_own', 'leave'), LeaveController.getAll);
+router.post('/leaves', authenticate, requirePermission('leave.apply', 'leave'), LeaveController.create);
+router.patch('/leaves/:id/status', authenticate, requirePermission('leave.approve', 'leave'), LeaveController.updateStatus);
+router.post('/leaves/:id/cancel', authenticate, requirePermission('leave.cancel', 'leave'), LeaveController.cancel);
 
 // ==========================================
 // 6. TASKS & WORKFLOWS
 // ==========================================
-router.get('/tasks', authenticate, requirePermission('tasks'), TaskController.getAll);
-router.post('/tasks', authenticate, requirePermission('tasks'), TaskController.create);
-router.patch('/tasks/:id/status', authenticate, requirePermission('tasks'), TaskController.updateStatus);
-router.patch('/tasks/:id/reassign', authenticate, requirePermission('tasks'), TaskController.reassign);
-router.post('/tasks/:id/comments', authenticate, requirePermission('tasks'), TaskController.addComment);
+router.get('/tasks', authenticate, requirePermission('tasks.view_own', 'tasks'), TaskController.getAll);
+router.post('/tasks', authenticate, requirePermission('tasks.create', 'tasks'), TaskController.create);
+router.patch('/tasks/:id/status', authenticate, requirePermission('tasks.status', 'tasks'), TaskController.updateStatus);
+router.patch('/tasks/:id/reassign', authenticate, requirePermission('tasks.assign', 'tasks'), TaskController.reassign);
+router.post('/tasks/:id/comments', authenticate, requirePermission('tasks.comments', 'tasks'), TaskController.addComment);
 
 // ==========================================
 // 7. LEADS & ENQUIRIES
 // ==========================================
-router.get('/leads', authenticate, requirePermission('leads'), LeadController.getAll);
-router.post('/leads', authenticate, requirePermission('leads'), LeadController.create);
-router.patch('/leads/:id', authenticate, requirePermission('leads'), LeadController.update);
-router.patch('/leads/:id/status', authenticate, requirePermission('leads'), LeadController.updateStatus);
+router.get('/leads', authenticate, requirePermission('leads.view', 'leads'), LeadController.getAll);
+router.post('/leads', authenticate, requirePermission('leads.create', 'leads'), LeadController.create);
+router.patch('/leads/:id', authenticate, requirePermission('leads.edit', 'leads'), LeadController.update);
+router.patch('/leads/:id/status', authenticate, requirePermission('leads.status', 'leads'), LeadController.updateStatus);
 
 // ==========================================
 // 8. PRODUCT DATASHEET LIBRARY
 // ==========================================
-router.get('/products', authenticate, requirePermission('products'), ProductController.getAll);
-router.post('/products', authenticate, authorize([RoleType.ADMIN]), ProductController.create);
+router.get('/products', authenticate, requirePermission('products.view', 'products'), ProductController.getAll);
+router.post('/products', authenticate, requirePermission('products.create', 'products'), ProductController.create);
 router.post(
   '/products/:id/documents',
   authenticate,
-  authorize([RoleType.ADMIN]),
+  requirePermission('products.edit', 'products'),
   uploadLimiter,
   uploadMiddleware.single('file'),
   ProductController.uploadDocument
@@ -126,7 +126,7 @@ router.post(
 router.put(
   '/products/:id/documents/:docId',
   authenticate,
-  authorize([RoleType.ADMIN]),
+  requirePermission('products.edit', 'products'),
   uploadLimiter,
   uploadMiddleware.single('file'),
   ProductController.replaceDocument
@@ -134,21 +134,22 @@ router.put(
 router.get(
   '/products/:id/documents/:docId/signed-url',
   authenticate,
+  requirePermission('products.view', 'products'),
   ProductController.getDocumentSignedUrl
 );
-router.delete('/products/:id/documents/:docId', authenticate, authorize([RoleType.ADMIN]), ProductController.deleteDocument);
+router.delete('/products/:id/documents/:docId', authenticate, requirePermission('products.delete', 'products'), ProductController.deleteDocument);
 
 // ==========================================
 // 9. INTERNAL MESSAGING
 // ==========================================
-router.get('/messages/conversations', authenticate, requirePermission('messaging'), MessageController.getConversations);
-router.get('/messages/conversations/:conversationId', authenticate, requirePermission('messaging'), MessageController.getConversationMessages);
-router.post('/messages/groups', authenticate, requirePermission('messaging'), MessageController.createGroup);
-router.get('/messages/:recipientId', authenticate, requirePermission('messaging'), MessageController.getMessages);
+router.get('/messages/conversations', authenticate, requirePermission('messaging.view', 'messaging'), MessageController.getConversations);
+router.get('/messages/conversations/:conversationId', authenticate, requirePermission('messaging.view', 'messaging'), MessageController.getConversationMessages);
+router.post('/messages/groups', authenticate, requirePermission('messaging.create_group', 'messaging'), MessageController.createGroup);
+router.get('/messages/:recipientId', authenticate, requirePermission('messaging.view', 'messaging'), MessageController.getMessages);
 router.post(
   '/messages',
   authenticate,
-  requirePermission('messaging'),
+  requirePermission('messaging.send', 'messaging'),
   uploadLimiter,
   uploadMiddleware.single('attachment'),
   MessageController.sendMessage
@@ -156,22 +157,22 @@ router.post(
 router.get(
   '/messages/attachments/:messageId/signed-url',
   authenticate,
-  requirePermission('messaging'),
+  requirePermission('messaging.attachments', 'messaging'),
   MessageController.getAttachmentSignedUrl
 );
 
 // ==========================================
 // 10. NOTIFICATIONS
 // ==========================================
-router.get('/notifications', authenticate, requirePermission('notifications'), NotificationController.getAll);
-router.patch('/notifications/mark-all-read', authenticate, requirePermission('notifications'), NotificationController.markAllRead);
-router.patch('/notifications/:id/read', authenticate, requirePermission('notifications'), NotificationController.markRead);
+router.get('/notifications', authenticate, requirePermission('notifications.view', 'notifications'), NotificationController.getAll);
+router.patch('/notifications/mark-all-read', authenticate, requirePermission('notifications.read', 'notifications'), NotificationController.markAllRead);
+router.patch('/notifications/:id/read', authenticate, requirePermission('notifications.read', 'notifications'), NotificationController.markRead);
 
 // ==========================================
 // 11. REPORTS & MONTHLY PAYROLL
 // ==========================================
-router.get('/reports/summary', authenticate, requirePermission('reports'), ReportController.getSummary);
-router.get('/reports/payroll', authenticate, authorize([RoleType.ADMIN]), ReportController.getMonthlyPayroll);
+router.get('/reports/summary', authenticate, requirePermission('reports.view', 'reports'), ReportController.getSummary);
+router.get('/reports/payroll', authenticate, requirePermission('payroll.view', 'reports'), ReportController.getMonthlyPayroll);
 
 // ==========================================
 // 12. CONFIGURABLE SYSTEM SETTINGS
@@ -190,6 +191,9 @@ router.get('/audit', authenticate, authorize([RoleType.ADMIN]), AuditController.
 router.get('/content/bundle', ContentController.getBundle);
 router.get('/content/languages', ContentController.getLanguages);
 router.get('/content/items', authenticate, authorize([RoleType.ADMIN]), ContentController.getItems);
-router.put('/content/translations', authenticate, authorize([RoleType.ADMIN]), ContentController.updateTranslation);
+router.put('/content/row', authenticate, authorize([RoleType.ADMIN]), ContentController.updateRow);
+router.post('/content/items', authenticate, authorize([RoleType.ADMIN]), ContentController.createItem);
+router.post('/content/import-csv', authenticate, authorize([RoleType.ADMIN]), ContentController.importCsv);
+router.put('/content/items/:id/alias', authenticate, authorize([RoleType.ADMIN]), ContentController.updateAlias);
 
 export default router;

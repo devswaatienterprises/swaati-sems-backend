@@ -127,14 +127,26 @@ export class EmployeeController {
           'messaging',
         ];
 
-        const permInserts = defaultFeatures.map((feat) => ({
-          userId: newUser.id,
-          featureKey: feat,
-          enabled: permissions ? !!permissions[feat] : feat !== 'reports',
-          updatedBy: req.user?.email || 'Admin',
-        }));
+        let permInserts = [];
+        if (permissions && typeof permissions === 'object') {
+          permInserts = Object.entries(permissions).map(([feat, enabled]) => ({
+            userId: newUser.id,
+            featureKey: feat,
+            enabled: Boolean(enabled),
+            updatedBy: req.user?.email || 'Admin',
+          }));
+        } else {
+          permInserts = defaultFeatures.map((feat) => ({
+            userId: newUser.id,
+            featureKey: feat,
+            enabled: feat !== 'reports',
+            updatedBy: req.user?.email || 'Admin',
+          }));
+        }
 
-        await tx.userPermission.createMany({ data: permInserts });
+        if (permInserts.length > 0) {
+          await tx.userPermission.createMany({ data: permInserts });
+        }
 
         // Create Employee profile
         const newEmployee = await tx.employee.create({

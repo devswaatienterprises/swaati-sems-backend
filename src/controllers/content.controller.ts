@@ -48,27 +48,111 @@ export class ContentController {
   }
 
   /**
-   * PUT /api/v1/content/translations (Admin)
-   * Updates or drafts a translation
+   * PUT /api/v1/content/row (Admin)
+   * Updates a unified content row (Alias, English, Marathi, Hindi, Module, Description)
    */
-  static async updateTranslation(req: AuthRequest, res: Response) {
+  static async updateRow(req: AuthRequest, res: Response) {
     try {
-      const { contentKey, languageCode, value, status = 'published' } = req.body;
+      const { contentKey, alias, en, mr, hi, description, module } = req.body;
+      const key = (alias || contentKey || '').trim();
 
-      if (!contentKey || !languageCode || value === undefined) {
-        return ApiResponse.error(res, 'contentKey, languageCode, and value are required', 400);
+      if (!key) {
+        return ApiResponse.error(res, 'Alias / contentKey is required', 400);
       }
 
-      const updated = await ContentService.setTranslation({
-        contentKey,
-        languageCode,
-        value,
-        status,
+      const updated = await ContentService.updateContentRow({
+        contentKey: key,
+        en,
+        mr,
+        hi,
+        description,
+        module,
         userId: req.user?.id,
         userName: req.user?.email || 'Admin',
       });
 
-      return ApiResponse.success(res, updated, 'Content translation saved successfully');
+      return ApiResponse.success(res, updated, `Translation row for '${key}' updated successfully`);
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  /**
+   * POST /api/v1/content/items (Admin)
+   * Creates a new content item with initial translations
+   */
+  static async createItem(req: AuthRequest, res: Response) {
+    try {
+      const { contentKey, alias, en, mr, hi, description, module } = req.body;
+      const key = (alias || contentKey || '').trim();
+
+      if (!key) {
+        return ApiResponse.error(res, 'Alias / contentKey is required', 400);
+      }
+
+      const created = await ContentService.updateContentRow({
+        contentKey: key,
+        en: en || '',
+        mr: mr || '',
+        hi: hi || '',
+        description,
+        module,
+        userId: req.user?.id,
+        userName: req.user?.email || 'Admin',
+      });
+
+      return ApiResponse.success(res, created, `New content item '${key}' created successfully`, 201);
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  /**
+   * POST /api/v1/content/import-csv (Admin)
+   * Batch imports translations from CSV row objects
+   */
+  static async importCsv(req: AuthRequest, res: Response) {
+    try {
+      const { rows } = req.body;
+
+      if (!rows || !Array.isArray(rows)) {
+        return ApiResponse.error(res, 'Invalid request: rows array is required', 400);
+      }
+
+      const summary = await ContentService.importCsvData({
+        rows,
+        userId: req.user?.id,
+        userName: req.user?.email || 'Admin',
+      });
+
+      return ApiResponse.success(res, summary, 'CSV translations processed successfully');
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  /**
+   * PUT /api/v1/content/items/:id/alias (Admin)
+   * Advanced: Rename content key / Alias
+   */
+  static async updateAlias(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const { newContentKey, newAlias } = req.body;
+      const targetKey = (newAlias || newContentKey || '').trim();
+
+      if (!targetKey) {
+        return ApiResponse.error(res, 'New Alias / contentKey is required', 400);
+      }
+
+      const updated = await ContentService.updateAlias({
+        id,
+        newContentKey: targetKey,
+        userId: req.user?.id,
+        userName: req.user?.email || 'Admin',
+      });
+
+      return ApiResponse.success(res, updated, `Alias renamed to '${targetKey}' successfully`);
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }
