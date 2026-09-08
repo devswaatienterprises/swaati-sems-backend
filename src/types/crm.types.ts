@@ -1,7 +1,10 @@
-export type RoleType = 'ADMIN' | 'EMPLOYEE';
+export type RoleType = 'ADMIN' | 'OPERATION_HEAD' | 'SALES' | 'ACCOUNTANT' | 'WAREHOUSE_MANAGER';
 export const RoleType = {
   ADMIN: 'ADMIN' as RoleType,
-  EMPLOYEE: 'EMPLOYEE' as RoleType,
+  OPERATION_HEAD: 'OPERATION_HEAD' as RoleType,
+  SALES: 'SALES' as RoleType,
+  ACCOUNTANT: 'ACCOUNTANT' as RoleType,
+  WAREHOUSE_MANAGER: 'WAREHOUSE_MANAGER' as RoleType,
 };
 
 export type Priority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';

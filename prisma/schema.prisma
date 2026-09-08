@@ -140,6 +140,7 @@ model Attendance {
 // ----------------------------------------------------
 model LeaveRequest {
   id              String    @id @default(uuid())
+  leaveCode       String    @unique @default("") @map("leave_code")
   employeeId      String    @map("employee_id")
   employee        Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType       String    @default("Casual Leave") @map("leave_type")

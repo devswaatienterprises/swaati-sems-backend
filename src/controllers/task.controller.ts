@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import { Priority, RoleType, TaskStatus } from '../types/crm.types';
 import { NotificationService } from '../services/notification.service';
 import { AuditService } from '../services/audit.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class TaskController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -63,9 +64,7 @@ export class TaskController {
       });
 
       const finalAssignedToId = targetEmp ? targetEmp.id : assignedToId;
-
-      const count = await prisma.task.count();
-      const taskCode = `TSK-${500 + count + 1}`;
+      const taskCode = await SequenceService.getNextTaskCode();
 
       const task = await prisma.task.create({
         data: {

@@ -2,11 +2,8 @@ import { Response, NextFunction } from 'express';
 import { AuthRequest } from './auth';
 import { ApiResponse } from '../utils/apiResponse';
 
-export type RoleType = 'ADMIN' | 'EMPLOYEE';
-export const RoleType = {
-  ADMIN: 'ADMIN' as RoleType,
-  EMPLOYEE: 'EMPLOYEE' as RoleType,
-};
+import { RoleType } from '../types/crm.types';
+export { RoleType };
 
 export function authorize(allowedRoles: RoleType[] = []) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {

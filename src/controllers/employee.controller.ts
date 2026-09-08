@@ -6,6 +6,7 @@ import { AuthRequest } from '../middleware/auth';
 import { RoleType } from '../types/crm.types';
 import { AuditService } from '../services/audit.service';
 import { R2Service } from '../services/r2.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class EmployeeController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -84,8 +85,7 @@ export class EmployeeController {
         return ApiResponse.error(res, 'Name, email, and mobile are required', 400);
       }
 
-      const count = await prisma.employee.count();
-      const employeeCode = `EMP-${100 + count + 1}`;
+      const employeeCode = await SequenceService.getNextEmployeeCode();
       const finalUserId = (userId || email.split('@')[0]).trim().toLowerCase();
 
       // Check if email or userId exists
@@ -100,7 +100,8 @@ export class EmployeeController {
       }
 
       const passwordHash = await bcrypt.hash(password || 'Employee@123', 10);
-      const userRole = role === 'ADMIN' ? RoleType.ADMIN : RoleType.EMPLOYEE;
+      const validRoles = ['ADMIN', 'OPERATION_HEAD', 'SALES', 'ACCOUNTANT', 'WAREHOUSE_MANAGER'];
+      const userRole = validRoles.includes(role) ? role : 'OPERATION_HEAD';
 
       // Create linked User and Employee in transaction
       const result = await prisma.$transaction(async (tx) => {
@@ -208,6 +209,7 @@ export class EmployeeController {
         department,
         designation,
         reportingManager,
+        role,
       } = req.body;
 
       const updated = await prisma.employee.update({
@@ -219,7 +221,18 @@ export class EmployeeController {
           designation,
           reportingManager,
         },
+        include: { user: true },
       });
+
+      if (role && updated.userRefId) {
+        const validRoles = ['ADMIN', 'OPERATION_HEAD', 'SALES', 'ACCOUNTANT', 'WAREHOUSE_MANAGER'];
+        if (validRoles.includes(role)) {
+          await prisma.user.update({
+            where: { id: updated.userRefId },
+            data: { role },
+          });
+        }
+      }
 
       return ApiResponse.success(res, updated, 'Employee profile updated');
     } catch (err: any) {

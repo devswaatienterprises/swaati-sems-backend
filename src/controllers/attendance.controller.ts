@@ -148,6 +148,7 @@ export class AttendanceController {
   static async checkOut(req: AuthRequest, res: Response) {
     try {
       const employeeId = req.user?.employeeId;
+      const currentUserId = req.user?.id;
       if (!employeeId) {
         return ApiResponse.error(res, 'No active employee profile associated with your user session.', 400);
       }
@@ -171,6 +172,147 @@ export class AttendanceController {
 
       if (attendanceRecord.checkOut !== '-') {
         return ApiResponse.error(res, 'You have already checked out for today.', 400);
+      }
+
+      // Check for incomplete tasks assigned to this employee with deadline of today or earlier
+      const endOfToday = new Date(todayDate);
+      endOfToday.setHours(23, 59, 59, 999);
+
+      const incompleteTasksDueToday = await prisma.task.findMany({
+        where: {
+          assignedToId: employeeId,
+          status: {
+            notIn: ['COMPLETED', 'CANCELLED'],
+          },
+          deadline: {
+            lte: endOfToday,
+          },
+        },
+        include: {
+          assignedBy: {
+            include: { user: true },
+          },
+        },
+      });
+
+      const { taskUpdates } = req.body || {};
+
+      if (incompleteTasksDueToday.length > 0) {
+        if (!taskUpdates || !Array.isArray(taskUpdates) || taskUpdates.length === 0) {
+          return res.status(400).json({
+            success: false,
+            requiresTaskCheck: true,
+            message: 'You have tasks due today. Please complete them or provide an update before checking out.',
+            data: {
+              pendingTasks: incompleteTasksDueToday.map((t) => ({
+                id: t.id,
+                taskCode: t.taskCode,
+                title: t.title,
+                status: t.status,
+                priority: t.priority,
+                deadline: t.deadline,
+                assignedBy: t.assignedBy?.name,
+                assignedById: t.assignedById,
+              })),
+            },
+          });
+        }
+
+        // Validate that all incomplete tasks due today have been addressed
+        for (const task of incompleteTasksDueToday) {
+          const update = taskUpdates.find((u: any) => u.taskId === task.id);
+          if (!update) {
+            return ApiResponse.error(
+              res,
+              `Task "${task.title}" is due today. Please mark it Completed or provide an update.`,
+              400
+            );
+          }
+
+          const newStatus = (update.status || task.status).toUpperCase();
+          const isCompleted = newStatus === 'COMPLETED';
+          const updateNote = (update.updateNote || update.note || '').trim();
+
+          if (!isCompleted && !updateNote) {
+            return ApiResponse.error(
+              res,
+              `Please provide a short update note for incomplete task: "${task.title}".`,
+              400
+            );
+          }
+
+          // Update task in database
+          await prisma.task.update({
+            where: { id: task.id },
+            data: {
+              status: isCompleted ? 'COMPLETED' : newStatus === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'TODO',
+              completedAt: isCompleted ? new Date() : null,
+            },
+          });
+
+          // If note is provided, add task comment and send message to assigner
+          if (updateNote) {
+            await prisma.taskComment.create({
+              data: {
+                taskId: task.id,
+                author: req.user?.email || 'Employee',
+                content: `[End-of-Day Check-Out Update]: ${updateNote}`,
+              },
+            });
+
+            // Send message to the person who assigned the task
+            const assignerUserId = task.assignedBy?.userId || task.assignedBy?.userRefId || task.assignedBy?.user?.id;
+            if (assignerUserId && currentUserId && assignerUserId !== currentUserId) {
+              let memberMatch = await prisma.conversationMember.findFirst({
+                where: {
+                  userId: currentUserId,
+                  conversation: {
+                    isGroup: false,
+                    members: {
+                      some: { userId: assignerUserId },
+                    },
+                  },
+                },
+                select: { conversationId: true },
+              });
+
+              let conversationId = memberMatch?.conversationId;
+              if (!conversationId) {
+                const newConvo = await prisma.conversation.create({
+                  data: {
+                    isGroup: false,
+                    members: {
+                      create: [
+                        { userId: currentUserId },
+                        { userId: assignerUserId },
+                      ],
+                    },
+                  },
+                });
+                conversationId = newConvo.id;
+              }
+
+              const formattedMessage = `📋 End-of-Day Task Update\n\nTask: ${task.title} (${task.taskCode})\nStatus: ${isCompleted ? 'Completed' : (update.status || task.status)}\n\nUpdate:\n"${updateNote}"`;
+
+              await prisma.message.create({
+                data: {
+                  conversationId,
+                  senderId: currentUserId,
+                  content: formattedMessage,
+                },
+              });
+
+              await NotificationService.sendNotification({
+                userId: assignerUserId,
+                type: 'task',
+                title: `End-of-Day Task Update: ${task.title}`,
+                message: `${req.user?.email || 'Employee'} posted an update for task "${task.title}": ${updateNote}`,
+                relatedType: 'Task',
+                relatedId: task.id,
+              });
+            }
+          }
+        }
       }
 
       // Calculate working hours

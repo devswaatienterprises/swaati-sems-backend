@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import { LeadStatus, Priority, RoleType } from '../types/crm.types';
 import { AuditService } from '../services/audit.service';
 import { NotificationService } from '../services/notification.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class LeadController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -57,8 +58,7 @@ export class LeadController {
         return ApiResponse.error(res, 'Lead name, mobile number, and product interested are required', 400);
       }
 
-      const count = await prisma.lead.count();
-      const leadCode = `LEAD-2026-${100 + count + 1}`;
+      const leadCode = await SequenceService.getNextLeadCode();
       const leadAddedBy = req.user?.email ? req.user.email.split('@')[0] : 'Staff';
       const currentEmpId = req.user?.employeeId;
 

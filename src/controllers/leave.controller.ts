@@ -5,6 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import { LeaveStatus, RoleType } from '../types/crm.types';
 import { NotificationService } from '../services/notification.service';
 import { AuditService } from '../services/audit.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class LeaveController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -78,8 +79,11 @@ export class LeaveController {
         );
       }
 
+      const leaveCode = await SequenceService.getNextLeaveCode();
+
       const leave = await prisma.leaveRequest.create({
         data: {
+          leaveCode,
           employeeId,
           leaveType: leaveType || 'Casual Leave',
           startDate: start,

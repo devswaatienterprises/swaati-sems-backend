@@ -4,6 +4,7 @@ import { ApiResponse } from '../utils/apiResponse';
 import { AuthRequest } from '../middleware/auth';
 import { AuditService } from '../services/audit.service';
 import { R2Service } from '../services/r2.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class ProductController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -30,8 +31,7 @@ export class ProductController {
         return ApiResponse.error(res, 'Name, category, and brand are required', 400);
       }
 
-      const count = await prisma.product.count();
-      const productCode = `PROD-${category.slice(0, 2).toUpperCase()}-${100 + count + 1}`;
+      const productCode = await SequenceService.getNextProductCode();
 
       const product = await prisma.product.create({
         data: {

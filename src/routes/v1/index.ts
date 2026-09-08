@@ -184,6 +184,7 @@ router.patch('/settings', authenticate, authorize([RoleType.ADMIN]), SettingCont
 // 13. AUDIT / ACTIVITY TRAIL
 // ==========================================
 router.get('/audit', authenticate, authorize([RoleType.ADMIN]), AuditController.getAll);
+router.get('/employees/:id/activity', authenticate, authorize([RoleType.ADMIN]), AuditController.getEmployeeActivity);
 
 // ==========================================
 // 14. CONTENT & RUNTIME TRANSLATION LAYER

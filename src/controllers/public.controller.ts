@@ -3,6 +3,7 @@ import { prisma } from '../config/db';
 import { ApiResponse } from '../utils/apiResponse';
 import { NotificationService } from '../services/notification.service';
 import { AuditService } from '../services/audit.service';
+import { SequenceService } from '../services/sequence.service';
 
 export class PublicController {
   static async getProducts(req: Request, res: Response) {
@@ -184,16 +185,8 @@ export class PublicController {
         );
       }
 
-      // 3. Unique Lead Code Generation
-      const currentYear = new Date().getFullYear();
-      const count = await prisma.lead.count();
-      let leadCode = `LEAD-WEB-${currentYear}-${String(count + 1).padStart(3, '0')}`;
-
-      // Ensure uniqueness in case of race condition
-      const codeCheck = await prisma.lead.findUnique({ where: { leadCode } });
-      if (codeCheck) {
-        leadCode = `LEAD-WEB-${currentYear}-${String(count + 1).padStart(3, '0')}-${Date.now().toString().slice(-4)}`;
-      }
+      // 3. Concurrency-Safe Unique Lead Code Generation
+      const leadCode = await SequenceService.getNextLeadCode();
 
       // 4. Assign to Sales Team Member if available
       const salesEmp = await prisma.employee.findFirst({
