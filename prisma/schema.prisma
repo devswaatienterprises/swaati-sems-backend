@@ -79,6 +79,8 @@ model Employee {
   leaveRequests    LeaveRequest[]
   assignedTasks    Task[]               @relation("AssignedTasks")
   createdTasks     Task[]               @relation("CreatedTasks")
+  recurringAssignedTasks RecurringTask[]    @relation("RecurringAssignedTasks")
+  recurringCreatedTasks  RecurringTask[]    @relation("RecurringCreatedTasks")
   assignedLeads    Lead[]               @relation("AssignedLeads")
   createdLeads     Lead[]               @relation("CreatedLeads")
 
@@ -186,6 +188,10 @@ model Task {
   assignedById String                  @map("assigned_by_id")
   assignedBy   Employee                @relation("CreatedTasks", fields: [assignedById], references: [id])
 
+  recurringTaskId String?               @map("recurring_task_id")
+  recurringTask   RecurringTask?        @relation("RecurringSource", fields: [recurringTaskId], references: [id], onDelete: SetNull)
+  recurringOccurrence RecurringTaskOccurrence?
+
   comments     TaskComment[]
   history      TaskAssignmentHistory[]
 
@@ -194,6 +200,7 @@ model Task {
 
   @@index([assignedToId])
   @@index([assignedById])
+  @@index([recurringTaskId])
   @@index([status])
   @@index([deadline])
   @@map("tasks")
@@ -222,6 +229,58 @@ model TaskAssignmentHistory {
 
   @@index([taskId])
   @@map("task_assignment_history")
+}
+
+// ----------------------------------------------------
+// 7.1 RECURRING TASKS / DAILY SOPS
+// ----------------------------------------------------
+model RecurringTask {
+  id              String    @id @default(uuid())
+  recurringCode   String    @unique @map("recurring_code") // e.g. SOP-001, SOP-002...
+  title           String
+  description     String?
+  priority        String    @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  frequency       String    @default("DAILY") // DAILY, WEEKLY, MONTHLY
+  daysOfWeek      Int[]     @default([]) @map("days_of_week") // 1=Mon, 2=Tue... 7=Sun
+  dayOfMonth      Int?      @map("day_of_month") // 1-31
+  startDate       DateTime  @map("start_date")
+  endDate         DateTime? @map("end_date")
+  dueTime         String?   @map("due_time") // e.g. "18:00" or "06:00 PM"
+  workingDaysOnly Boolean   @default(true) @map("working_days_only") // Skips non-working days/Sundays
+  active          Boolean   @default(true) // Active or Paused
+
+  assignedToId    String    @map("assigned_to_id")
+  assignedTo      Employee  @relation("RecurringAssignedTasks", fields: [assignedToId], references: [id])
+
+  assignedById    String    @map("assigned_by_id")
+  assignedBy      Employee  @relation("RecurringCreatedTasks", fields: [assignedById], references: [id])
+
+  tasks           Task[]    @relation("RecurringSource")
+  occurrences     RecurringTaskOccurrence[]
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([assignedToId])
+  @@index([assignedById])
+  @@index([active])
+  @@index([frequency])
+  @@map("recurring_tasks")
+}
+
+model RecurringTaskOccurrence {
+  id              String        @id @default(uuid())
+  recurringTaskId String        @map("recurring_task_id")
+  recurringTask   RecurringTask @relation(fields: [recurringTaskId], references: [id], onDelete: Cascade)
+  occurrenceDate  DateTime      @map("occurrence_date") // IST midnight date
+  taskId          String        @unique @map("task_id")
+  task            Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@unique([recurringTaskId, occurrenceDate])
+  @@index([recurringTaskId])
+  @@index([occurrenceDate])
+  @@map("recurring_task_occurrences")
 }
 
 // ----------------------------------------------------

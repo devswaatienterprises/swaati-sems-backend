@@ -5,6 +5,7 @@ import { EmployeeController } from '../../controllers/employee.controller';
 import { AttendanceController } from '../../controllers/attendance.controller';
 import { LeaveController } from '../../controllers/leave.controller';
 import { TaskController } from '../../controllers/task.controller';
+import { RecurringTaskController } from '../../controllers/recurringTask.controller';
 import { LeadController } from '../../controllers/lead.controller';
 import { ProductController } from '../../controllers/product.controller';
 import { PublicController } from '../../controllers/public.controller';
@@ -101,6 +102,15 @@ router.post('/tasks', authenticate, requirePermission('tasks.create', 'tasks'), 
 router.patch('/tasks/:id/status', authenticate, requirePermission('tasks.status', 'tasks'), TaskController.updateStatus);
 router.patch('/tasks/:id/reassign', authenticate, requirePermission('tasks.assign', 'tasks'), TaskController.reassign);
 router.post('/tasks/:id/comments', authenticate, requirePermission('tasks.comments', 'tasks'), TaskController.addComment);
+
+// Recurring Tasks / Daily SOPs
+router.get('/tasks/recurring', authenticate, requirePermission('tasks.view_own', 'tasks'), RecurringTaskController.getAll);
+router.get('/tasks/recurring/:id', authenticate, requirePermission('tasks.view_own', 'tasks'), RecurringTaskController.getById);
+router.post('/tasks/recurring', authenticate, requirePermission('tasks.create', 'tasks'), RecurringTaskController.create);
+router.put('/tasks/recurring/:id', authenticate, requirePermission('tasks.edit', 'tasks'), RecurringTaskController.update);
+router.patch('/tasks/recurring/:id/status', authenticate, requirePermission('tasks.edit', 'tasks'), RecurringTaskController.updateStatus);
+router.delete('/tasks/recurring/:id', authenticate, requirePermission('tasks.delete', 'tasks'), RecurringTaskController.delete);
+router.post('/tasks/recurring/generate', authenticate, requirePermission('tasks.create', 'tasks'), RecurringTaskController.generate);
 
 // ==========================================
 // 7. LEADS & ENQUIRIES

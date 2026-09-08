@@ -7,9 +7,16 @@ import { NotificationService } from '../services/notification.service';
 import { AuditService } from '../services/audit.service';
 import { SequenceService } from '../services/sequence.service';
 
+import { RecurringTaskService } from '../services/recurringTask.service';
+
 export class TaskController {
   static async getAll(req: AuthRequest, res: Response) {
     try {
+      // Auto-evaluate and generate any due recurring tasks
+      await RecurringTaskService.generateDueTasks().catch((err) =>
+        console.warn('[RecurringTask AutoSync Error]:', err.message)
+      );
+
       const userRole = req.user?.role;
       const employeeId = req.user?.employeeId;
       const canViewTeam = userRole === RoleType.ADMIN || Boolean(req.user?.permissions?.['tasks.view_team']);
@@ -25,8 +32,9 @@ export class TaskController {
       const tasks = await prisma.task.findMany({
         where: whereClause,
         include: {
-          assignedTo: { select: { name: true, employeeCode: true, designation: true } },
-          assignedBy: { select: { name: true, employeeCode: true, designation: true } },
+          assignedTo: { select: { id: true, name: true, employeeCode: true, designation: true } },
+          assignedBy: { select: { id: true, name: true, employeeCode: true, designation: true } },
+          recurringTask: { select: { id: true, recurringCode: true, frequency: true } },
           comments: { orderBy: { createdAt: 'desc' } },
           history: { orderBy: { changedAt: 'desc' } },
         },

@@ -80,4 +80,20 @@ export class SequenceService {
     const num = Number(result.nextval);
     return `PROD-${String(num).padStart(3, '0')}`;
   }
+
+  /**
+   * Concurrency-safe Recurring Task / SOP code generator (SOP-001, SOP-002, ...)
+   * Uses atomic PostgreSQL sequence.
+   */
+  static async getNextRecurringTaskCode(): Promise<string> {
+    const seqName = 'recurring_task_code_seq';
+    await prisma.$executeRawUnsafe(
+      `CREATE SEQUENCE IF NOT EXISTS ${seqName} START WITH 1 INCREMENT BY 1;`
+    );
+    const [result] = await prisma.$queryRawUnsafe<[{ nextval: string | number | bigint }]>(
+      `SELECT nextval('${seqName}') as nextval;`
+    );
+    const num = Number(result.nextval);
+    return `SOP-${String(num).padStart(3, '0')}`;
+  }
 }

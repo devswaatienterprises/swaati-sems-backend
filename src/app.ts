@@ -70,9 +70,27 @@ app.use('/api/v1', apiV1Router);
 // Centralized Error Handler
 app.use(errorHandler);
 
+import { RecurringTaskService } from './services/recurringTask.service';
+
 // Start Server
 app.listen(env.PORT, () => {
   console.log(`🚀 [Swaati Backend API] Server running on port ${env.PORT} [${env.NODE_ENV}]`);
+
+  // Initial generation check on startup
+  RecurringTaskService.generateDueTasks()
+    .then((res) => {
+      if (res.generatedCount > 0) {
+        console.log(`⚡ [Recurring Tasks] Generated ${res.generatedCount} due tasks on startup.`);
+      }
+    })
+    .catch((err) => console.warn('⚠️ [Recurring Tasks Startup Check Warning]:', err.message));
+
+  // Periodic recurring task generator check (Every 15 minutes)
+  setInterval(() => {
+    RecurringTaskService.generateDueTasks().catch((err) =>
+      console.warn('⚠️ [Recurring Tasks Periodic Check Warning]:', err.message)
+    );
+  }, 15 * 60 * 1000);
 });
 
 export default app;
