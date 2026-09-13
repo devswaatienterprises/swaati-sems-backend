@@ -28,6 +28,7 @@ const sanitizeOrigin = (url?: string): string => {
 
 const trustedProductionOrigins = [
   'https://swaati-sems-crm.onrender.com',
+  'https://swaati-sems-api.onrender.com',
   'https://swaatienterprises.in',
   'https://www.swaatienterprises.in',
 ];

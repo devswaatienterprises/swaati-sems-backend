@@ -28,10 +28,17 @@ app.use(
 
       const normalizedOrigin = origin.trim().replace(/^["']|["']$/g, '').trim().replace(/\/+$/, '');
 
-      if (env.CORS_ORIGINS.includes(normalizedOrigin)) {
+      const isAllowed =
+        env.CORS_ORIGINS.includes(normalizedOrigin) ||
+        /^https:\/\/([a-zA-Z0-9_-]+\.)?vercel\.app$/.test(normalizedOrigin) ||
+        /^https:\/\/([a-zA-Z0-9_-]+\.)?swaatienterprises\.in$/.test(normalizedOrigin) ||
+        /^https:\/\/([a-zA-Z0-9_-]+\.)?onrender\.com$/.test(normalizedOrigin);
+
+      if (isAllowed) {
         return callback(null, true);
       }
 
+      console.warn(`[CORS Blocked]: Origin ${normalizedOrigin} is not in allowed origins`);
       return callback(null, false);
     },
     credentials: true,
