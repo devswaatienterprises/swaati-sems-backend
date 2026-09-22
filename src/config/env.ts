@@ -27,6 +27,8 @@ const sanitizeOrigin = (url?: string): string => {
 };
 
 const trustedProductionOrigins = [
+  'https://app.swaatienterprises.com',
+  'https://api.swaatienterprises.com',
   'https://swaati-sems-crm.onrender.com',
   'https://swaati-sems-api.onrender.com',
   'https://swaatienterprises.in',
@@ -61,6 +63,7 @@ export const env = {
   PORT: parseInt(process.env.PORT || '4000', 10),
   DATABASE_URL: process.env.DATABASE_URL || 'file:./dev.db',
   JWT_SECRET: process.env.JWT_SECRET || 'swaati_enterprise_super_secure_jwt_secret_2026',
+  ENCRYPTION_SECRET: process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET || 'swaati_enterprise_super_secure_encryption_secret_2026',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   FRONTEND_URL: process.env.FRONTEND_URL || '',
   CRM_URL: process.env.CRM_URL || '',

@@ -32,6 +32,7 @@ app.use(
         env.CORS_ORIGINS.includes(normalizedOrigin) ||
         /^https:\/\/([a-zA-Z0-9_-]+\.)?vercel\.app$/.test(normalizedOrigin) ||
         /^https:\/\/([a-zA-Z0-9_-]+\.)?swaatienterprises\.in$/.test(normalizedOrigin) ||
+        /^https:\/\/([a-zA-Z0-9_-]+\.)?swaatienterprises\.com$/.test(normalizedOrigin) ||
         /^https:\/\/([a-zA-Z0-9_-]+\.)?onrender\.com$/.test(normalizedOrigin);
 
       if (isAllowed) {
