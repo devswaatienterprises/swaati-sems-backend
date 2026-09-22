@@ -11,6 +11,11 @@ const LeaveStatus = { PENDING: 'PENDING', APPROVED: 'APPROVED', REJECTED: 'REJEC
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    console.error('❌ SEED ABORTED: Demo seeding is strictly disabled in production environment to prevent overwriting production data.');
+    process.exit(1);
+  }
+
   console.log('🌱 Seeding Swaati Enterprises Operational CRM Database...');
 
   // 1. Password Hashes

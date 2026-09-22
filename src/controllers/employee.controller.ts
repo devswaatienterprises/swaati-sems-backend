@@ -7,6 +7,8 @@ import { RoleType } from '../types/crm.types';
 import { AuditService } from '../services/audit.service';
 import { R2Service } from '../services/r2.service';
 import { SequenceService } from '../services/sequence.service';
+import { RecurringTaskService } from '../services/recurringTask.service';
+import { encryptPassword, decryptPassword } from '../utils/encryption';
 
 export class EmployeeController {
   static async getAll(req: AuthRequest, res: Response) {
@@ -18,15 +20,29 @@ export class EmployeeController {
       if (status === 'Inactive') whereClause.active = false;
       if (department && department !== 'ALL') whereClause.department = department as string;
 
-      const employees = await prisma.employee.findMany({
+      const rawEmployees = await prisma.employee.findMany({
         where: whereClause,
         include: {
           user: {
             include: { permissions: true },
           },
+          departmentRef: true,
+          roleRef: true,
           documents: true,
         },
         orderBy: { createdAt: 'desc' },
+      });
+
+      const employees = rawEmployees.map((emp) => {
+        if (!emp.user) return emp;
+        const { encryptedPassword, passwordHash, ...userClean } = emp.user as any;
+        return {
+          ...emp,
+          user: {
+            ...userClean,
+            hasRecoverablePassword: Boolean(encryptedPassword),
+          },
+        };
       });
 
       return ApiResponse.success(res, employees, 'Employees fetched successfully');
@@ -44,6 +60,8 @@ export class EmployeeController {
           user: {
             include: { permissions: true },
           },
+          departmentRef: true,
+          roleRef: true,
           documents: true,
           attendances: { orderBy: { attendanceDate: 'desc' }, take: 15 },
           assignedTasks: { take: 10 },
@@ -55,7 +73,17 @@ export class EmployeeController {
         return ApiResponse.error(res, 'Employee profile not found', 404);
       }
 
-      return ApiResponse.success(res, employee, 'Employee profile fetched');
+      const { user, ...empRest } = employee as any;
+      let cleanUser = user;
+      if (user) {
+        const { encryptedPassword, passwordHash, ...userClean } = user;
+        cleanUser = {
+          ...userClean,
+          hasRecoverablePassword: Boolean(encryptedPassword),
+        };
+      }
+
+      return ApiResponse.success(res, { ...empRest, user: cleanUser }, 'Employee profile fetched');
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }
@@ -72,6 +100,8 @@ export class EmployeeController {
         role,
         department,
         designation,
+        departmentId,
+        roleId,
         joiningDate,
         reportingManager,
         idCardType,
@@ -99,7 +129,32 @@ export class EmployeeController {
         return ApiResponse.error(res, 'A user with this Email or User ID already exists.', 400);
       }
 
-      const passwordHash = await bcrypt.hash(password || 'Employee@123', 10);
+      let finalDepartmentName = department || 'Technical & Operations';
+      let finalDesignationName = designation || 'Site Engineer';
+      let finalDepartmentId = departmentId || null;
+      let finalRoleId = roleId || null;
+
+      if (roleId) {
+        const roleObj = await prisma.role.findUnique({
+          where: { id: roleId },
+          include: { department: true },
+        });
+        if (roleObj) {
+          finalRoleId = roleObj.id;
+          finalDepartmentId = roleObj.departmentId;
+          finalDepartmentName = roleObj.department.name;
+          finalDesignationName = roleObj.name;
+        }
+      } else if (departmentId) {
+        const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+        if (deptObj) {
+          finalDepartmentId = deptObj.id;
+          finalDepartmentName = deptObj.name;
+        }
+      }
+
+      const plainPassword = (password || 'Employee@123').trim();
+      const passwordHash = await bcrypt.hash(plainPassword, 10);
       const validRoles = ['ADMIN', 'OPERATION_HEAD', 'SALES', 'ACCOUNTANT', 'WAREHOUSE_MANAGER'];
       const userRole = validRoles.includes(role) ? role : 'OPERATION_HEAD';
 
@@ -157,8 +212,10 @@ export class EmployeeController {
             name,
             email: email.trim().toLowerCase(),
             mobile,
-            department: department || 'Technical & Operations',
-            designation: designation || 'Site Engineer',
+            department: finalDepartmentName,
+            designation: finalDesignationName,
+            departmentId: finalDepartmentId,
+            roleId: finalRoleId,
             joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
             reportingManager: reportingManager || 'Shailendra Patil',
             employmentStatus: 'Active',
@@ -170,6 +227,11 @@ export class EmployeeController {
             approvedLat: req.body.approvedLat != null ? parseFloat(req.body.approvedLat) : null,
             approvedLng: req.body.approvedLng != null ? parseFloat(req.body.approvedLng) : null,
             approvedRadiusMeters: req.body.approvedRadiusMeters != null ? parseInt(req.body.approvedRadiusMeters, 10) : 200,
+          },
+          include: {
+            departmentRef: true,
+            roleRef: true,
+            user: { include: { permissions: true } },
           },
         });
 
@@ -189,6 +251,13 @@ export class EmployeeController {
 
         return newEmployee;
       });
+
+      // Trigger automatic recurring tasks assignment if role is assigned
+      if (result.id && result.roleId) {
+        await RecurringTaskService.generateTasksForEmployee(result.id).catch((err) => {
+          console.warn('[Employee Create RecurringTask Trigger Warning]:', err.message);
+        });
+      }
 
       // Audit Log
       await AuditService.log({
@@ -213,8 +282,11 @@ export class EmployeeController {
         mobile,
         department,
         designation,
+        departmentId,
+        roleId,
         reportingManager,
         role,
+        password,
         attendanceVerification,
         approvedIPs,
         approvedLat,
@@ -222,13 +294,31 @@ export class EmployeeController {
         approvedRadiusMeters,
       } = req.body;
 
-      const employeeUpdateData: any = {
-        name,
-        mobile,
-        department,
-        designation,
-        reportingManager,
-      };
+      const employeeUpdateData: any = {};
+      if (name !== undefined) employeeUpdateData.name = name;
+      if (mobile !== undefined) employeeUpdateData.mobile = mobile;
+      if (department !== undefined) employeeUpdateData.department = department;
+      if (designation !== undefined) employeeUpdateData.designation = designation;
+      if (reportingManager !== undefined) employeeUpdateData.reportingManager = reportingManager;
+
+      if (roleId) {
+        const roleObj = await prisma.role.findUnique({
+          where: { id: roleId },
+          include: { department: true },
+        });
+        if (roleObj) {
+          employeeUpdateData.roleId = roleObj.id;
+          employeeUpdateData.departmentId = roleObj.departmentId;
+          employeeUpdateData.department = roleObj.department.name;
+          employeeUpdateData.designation = roleObj.name;
+        }
+      } else if (departmentId) {
+        const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+        if (deptObj) {
+          employeeUpdateData.departmentId = deptObj.id;
+          employeeUpdateData.department = deptObj.name;
+        }
+      }
 
       if (attendanceVerification !== undefined) {
         employeeUpdateData.attendanceVerification = attendanceVerification;
@@ -249,20 +339,73 @@ export class EmployeeController {
       const updated = await prisma.employee.update({
         where: { id },
         data: employeeUpdateData,
-        include: { user: true },
+        include: {
+          user: true,
+          departmentRef: true,
+          roleRef: true,
+        },
       });
 
-      if (role && updated.userRefId) {
+      if (updated.userRefId) {
+        const userUpdateData: any = {};
         const validRoles = ['ADMIN', 'OPERATION_HEAD', 'SALES', 'ACCOUNTANT', 'WAREHOUSE_MANAGER'];
-        if (validRoles.includes(role)) {
+        if (role && validRoles.includes(role)) {
+          userUpdateData.role = role;
+        }
+        if (password && password.trim()) {
+          const plainPassword = password.trim();
+          userUpdateData.passwordHash = await bcrypt.hash(plainPassword, 10);
+        }
+        if (Object.keys(userUpdateData).length > 0) {
           await prisma.user.update({
             where: { id: updated.userRefId },
-            data: { role },
+            data: userUpdateData,
           });
         }
       }
 
+      // Trigger automatic task generation for new role if role is assigned/changed
+      if (updated.id && updated.roleId) {
+        await RecurringTaskService.generateTasksForEmployee(updated.id).catch((err) => {
+          console.warn('[Employee Update RecurringTask Trigger Warning]:', err.message);
+        });
+      }
+
       return ApiResponse.success(res, updated, 'Employee profile updated');
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
+
+  static async revealPassword(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const employee = await prisma.employee.findFirst({
+        where: { OR: [{ id }, { userId: id }] },
+        include: { user: true },
+      });
+
+      if (!employee || !employee.user) {
+        return ApiResponse.error(res, 'Employee account not found', 404);
+      }
+
+      await AuditService.log({
+        actorUserId: req.user?.id,
+        action: 'EMPLOYEE_PASSWORD_STATUS_CHECKED',
+        entityType: 'Employee',
+        entityId: employee.id,
+        metadata: { employeeName: employee.name, employeeCode: employee.employeeCode },
+      });
+
+      return ApiResponse.success(
+        res,
+        {
+          hasPasswordSet: Boolean(employee.user.passwordHash),
+          isSecured: true,
+          maskedPassword: '••••••••',
+        },
+        'Password security status verified'
+      );
     } catch (err: any) {
       return ApiResponse.error(res, err.message, 500);
     }

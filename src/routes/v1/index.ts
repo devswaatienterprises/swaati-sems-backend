@@ -13,6 +13,8 @@ import { MessageController } from '../../controllers/message.controller';
 import { NotificationController } from '../../controllers/notification.controller';
 import { ReportController } from '../../controllers/report.controller';
 import { SettingController } from '../../controllers/setting.controller';
+import { DepartmentController } from '../../controllers/department.controller';
+import { RoleController } from '../../controllers/role.controller';
 import { AuditController } from '../../controllers/audit.controller';
 import { ContentController } from '../../controllers/content.controller';
 import { authenticate } from '../../middleware/auth';
@@ -44,11 +46,13 @@ router.post('/public/leads', publicLeadLimiter, PublicController.submitWebsiteLe
 router.post('/auth/login', authLimiter, AuthController.login);
 router.post('/auth/logout', AuthController.logout);
 router.get('/auth/me', authenticate, AuthController.me);
+router.post('/auth/change-password', authenticate, AuthController.changePassword);
 
 // ==========================================
 // 3. EMPLOYEE DIRECTORY & IDENTITY DOCUMENTS (Admin Only)
 // ==========================================
 router.get('/employees', authenticate, authorize([RoleType.ADMIN]), EmployeeController.getAll);
+router.get('/employees/:id/password', authenticate, authorize([RoleType.ADMIN]), EmployeeController.revealPassword);
 router.get('/employees/:id', authenticate, EmployeeController.getById);
 router.post('/employees', authenticate, authorize([RoleType.ADMIN]), EmployeeController.create);
 router.put('/employees/:id', authenticate, authorize([RoleType.ADMIN]), EmployeeController.update);
@@ -191,10 +195,22 @@ router.get('/reports/summary', authenticate, requirePermission('reports.view', '
 router.get('/reports/payroll', authenticate, requirePermission('payroll.view', 'reports'), ReportController.getMonthlyPayroll);
 
 // ==========================================
-// 12. CONFIGURABLE SYSTEM SETTINGS
+// 12. CONFIGURABLE SYSTEM SETTINGS & DEPARTMENTS / ROLES
 // ==========================================
 router.get('/settings', SettingController.getAll);
 router.patch('/settings', authenticate, authorize([RoleType.ADMIN]), SettingController.update);
+
+router.get('/departments', authenticate, DepartmentController.getAll);
+router.get('/departments/:id', authenticate, DepartmentController.getById);
+router.post('/departments', authenticate, authorize([RoleType.ADMIN]), DepartmentController.create);
+router.put('/departments/:id', authenticate, authorize([RoleType.ADMIN]), DepartmentController.update);
+router.patch('/departments/:id/status', authenticate, authorize([RoleType.ADMIN]), DepartmentController.updateStatus);
+
+router.get('/roles', authenticate, RoleController.getAll);
+router.get('/roles/:id', authenticate, RoleController.getById);
+router.post('/roles', authenticate, authorize([RoleType.ADMIN]), RoleController.create);
+router.put('/roles/:id', authenticate, authorize([RoleType.ADMIN]), RoleController.update);
+router.patch('/roles/:id/status', authenticate, authorize([RoleType.ADMIN]), RoleController.updateStatus);
 
 // ==========================================
 // 13. AUDIT / ACTIVITY TRAIL

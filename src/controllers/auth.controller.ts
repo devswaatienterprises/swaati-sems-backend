@@ -165,4 +165,48 @@ export class AuthController {
     res.clearCookie('token');
     return ApiResponse.success(res, null, 'Logged out successfully');
   }
+
+  static async changePassword(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) {
+        return ApiResponse.error(res, 'Unauthenticated', 401);
+      }
+
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) {
+        return ApiResponse.error(res, 'Current password and new password are required', 400);
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+      });
+
+      if (!user) {
+        return ApiResponse.error(res, 'User profile not found', 404);
+      }
+
+      const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!isMatch) {
+        return ApiResponse.error(res, 'Current password provided is incorrect', 400);
+      }
+
+      const newPasswordHash = await bcrypt.hash(newPassword.trim(), 10);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash: newPasswordHash },
+      });
+
+      await AuditService.log({
+        actorUserId: user.id,
+        action: 'PASSWORD_CHANGED',
+        entityType: 'User',
+        entityId: user.id,
+        metadata: { email: user.email },
+      });
+
+      return ApiResponse.success(res, null, 'Password updated successfully');
+    } catch (err: any) {
+      return ApiResponse.error(res, err.message, 500);
+    }
+  }
 }

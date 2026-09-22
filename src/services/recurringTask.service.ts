@@ -130,7 +130,7 @@ export class RecurringTaskService {
 
   /**
    * Generates all due recurring tasks for a target date (defaults to today in IST).
-   * Safe against duplicates at the database level.
+   * Supports both Role-based recurring templates and direct individual templates.
    */
   static async generateDueTasks(targetDate: Date = new Date()): Promise<{ generatedCount: number; tasks: any[] }> {
     const occurrenceDate = getISTDateMidnight(targetDate);
@@ -141,6 +141,16 @@ export class RecurringTaskService {
         active: true,
       },
       include: {
+        role: {
+          include: {
+            employees: {
+              where: {
+                active: true,
+              },
+              include: { user: true },
+            },
+          },
+        },
         assignedTo: {
           include: { user: true },
         },
@@ -151,107 +161,115 @@ export class RecurringTaskService {
     const generatedTasks: any[] = [];
 
     for (const tpl of templates) {
-      // 2. Validate Assignee is active
-      if (!tpl.assignedTo || !tpl.assignedTo.active) {
-        continue;
-      }
-      if (tpl.assignedTo.user && !tpl.assignedTo.user.isActive) {
+      // Skip if template is attached to a deactivated role
+      if (tpl.roleId && (!tpl.role || !tpl.role.active)) {
         continue;
       }
 
-      // 3. Check schedule matching
+      // Check schedule matching
       const isEligible = this.isScheduleMatching(tpl, targetDate);
       if (!isEligible) {
         continue;
       }
 
-      // 4. Concurrency-safe atomic check & creation
-      try {
-        const result = await prisma.$transaction(async (tx) => {
-          // Check if occurrence already exists
-          const existingOccurrence = await tx.recurringTaskOccurrence.findUnique({
-            where: {
-              recurringTaskId_occurrenceDate: {
-                recurringTaskId: tpl.id,
-                occurrenceDate,
-              },
-            },
-          });
-
-          if (existingOccurrence) {
-            return null; // Already generated
-          }
-
-          // Generate next sequential task code
-          const taskCode = await SequenceService.getNextTaskCode();
-          const deadline = buildDeadlineWithDueTime(occurrenceDate, tpl.dueTime);
-
-          // Create standard Task
-          const task = await tx.task.create({
-            data: {
-              taskCode,
-              title: tpl.title,
-              description: tpl.description,
-              priority: (tpl.priority?.toUpperCase() as Priority) || Priority.MEDIUM,
-              status: TaskStatus.TODO,
-              category: 'Recurring SOP',
-              startDate: occurrenceDate,
-              deadline,
-              reminderTime: tpl.dueTime,
-              assignedToId: tpl.assignedToId,
-              assignedById: tpl.assignedById,
-              recurringTaskId: tpl.id,
-            },
-            include: {
-              assignedTo: { include: { user: true } },
-              assignedBy: true,
-              recurringTask: true,
-            },
-          });
-
-          // Record occurrence record for uniqueness guarantee
-          await tx.recurringTaskOccurrence.create({
-            data: {
-              recurringTaskId: tpl.id,
-              occurrenceDate,
-              taskId: task.id,
-            },
-          });
-
-          // Record initial assignment history
-          await tx.taskAssignmentHistory.create({
-            data: {
-              taskId: task.id,
-              previousAssigneeId: null,
-              newAssigneeId: tpl.assignedToId,
-              changedBy: 'System (Recurring SOP)',
-            },
-          });
-
-          return task;
-        });
-
-        if (result) {
-          generatedTasks.push(result);
-
-          // Notify Assignee
-          if (result.assignedTo?.userRefId) {
-            await NotificationService.sendNotification({
-              userId: result.assignedTo.userRefId,
-              type: 'task_assigned',
-              title: 'Daily SOP Assigned',
-              message: `"${result.title}" scheduled for today has been added to your tasks.`,
-              relatedType: 'Task',
-              relatedId: result.id,
-            }).catch((err) => console.warn('[RecurringTask Notification Warning]:', err.message));
+      // Collect target assignees
+      const targetEmployees: any[] = [];
+      if (tpl.roleId && tpl.role?.employees) {
+        // Role-based template: generate for all active employees with this role
+        for (const emp of tpl.role.employees) {
+          if (emp.active && (!emp.user || emp.user.isActive)) {
+            targetEmployees.push(emp);
           }
         }
-      } catch (err: any) {
-        // Unique constraint error P2002 means another process generated it concurrently
-        if (err.code === 'P2002') {
-          console.log(`[RecurringTask] Occurrence for template ${tpl.recurringCode} already generated concurrently.`);
-        } else {
-          console.error(`[RecurringTask] Error generating task for ${tpl.recurringCode}:`, err);
+      } else if (tpl.assignedToId && tpl.assignedTo) {
+        // Individual-based template
+        if (tpl.assignedTo.active && (!tpl.assignedTo.user || tpl.assignedTo.user.isActive)) {
+          targetEmployees.push(tpl.assignedTo);
+        }
+      }
+
+      for (const emp of targetEmployees) {
+        try {
+          const result = await prisma.$transaction(async (tx) => {
+            // Check if occurrence already generated for this employee
+            const existingOccurrence = await tx.recurringTaskOccurrence.findFirst({
+              where: {
+                recurringTaskId: tpl.id,
+                occurrenceDate,
+                employeeId: emp.id,
+              },
+            });
+
+            if (existingOccurrence) {
+              return null; // Already generated
+            }
+
+            const taskCode = await SequenceService.getNextTaskCode();
+            const deadline = buildDeadlineWithDueTime(occurrenceDate, tpl.dueTime);
+
+            const task = await tx.task.create({
+              data: {
+                taskCode,
+                title: tpl.title,
+                description: tpl.description,
+                priority: (tpl.priority?.toUpperCase() as Priority) || Priority.MEDIUM,
+                status: TaskStatus.TODO,
+                category: 'Recurring SOP',
+                startDate: occurrenceDate,
+                deadline,
+                reminderTime: tpl.dueTime,
+                assignedToId: emp.id,
+                assignedById: tpl.assignedById,
+                recurringTaskId: tpl.id,
+              },
+              include: {
+                assignedTo: { include: { user: true } },
+                assignedBy: true,
+                recurringTask: true,
+              },
+            });
+
+            await tx.recurringTaskOccurrence.create({
+              data: {
+                recurringTaskId: tpl.id,
+                occurrenceDate,
+                employeeId: emp.id,
+                taskId: task.id,
+              },
+            });
+
+            await tx.taskAssignmentHistory.create({
+              data: {
+                taskId: task.id,
+                previousAssigneeId: null,
+                newAssigneeId: emp.id,
+                changedBy: 'System (Role Recurring SOP)',
+              },
+            });
+
+            return task;
+          });
+
+          if (result) {
+            generatedTasks.push(result);
+
+            if (result.assignedTo?.userRefId) {
+              await NotificationService.sendNotification({
+                userId: result.assignedTo.userRefId,
+                type: 'task_assigned',
+                title: 'Role SOP Task Assigned',
+                message: `"${result.title}" scheduled for today has been added to your task list.`,
+                relatedType: 'Task',
+                relatedId: result.id,
+              }).catch((err) => console.warn('[RecurringTask Notification Warning]:', err.message));
+            }
+          }
+        } catch (err: any) {
+          if (err.code === 'P2002') {
+            // Concurrency skip
+          } else {
+            console.error(`[RecurringTask] Error generating task for ${tpl.recurringCode} (Emp: ${emp.id}):`, err);
+          }
         }
       }
     }
@@ -263,22 +281,136 @@ export class RecurringTaskService {
   }
 
   /**
+   * Generates tasks immediately for a specific employee when their role changes or is assigned.
+   */
+  static async generateTasksForEmployee(employeeId: string, targetDate: Date = new Date()): Promise<number> {
+    const emp = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      include: { user: true, roleRef: true },
+    });
+
+    if (!emp || !emp.active || (emp.user && !emp.user.isActive) || !emp.roleId || !emp.roleRef || !emp.roleRef.active) {
+      return 0;
+    }
+
+    const occurrenceDate = getISTDateMidnight(targetDate);
+    const roleTemplates = await prisma.recurringTask.findMany({
+      where: {
+        roleId: emp.roleId,
+        active: true,
+      },
+      include: { assignedBy: true },
+    });
+
+    let generatedCount = 0;
+
+    for (const tpl of roleTemplates) {
+      const isEligible = this.isScheduleMatching(tpl, targetDate);
+      if (!isEligible) continue;
+
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          const existingOccurrence = await tx.recurringTaskOccurrence.findFirst({
+            where: {
+              recurringTaskId: tpl.id,
+              occurrenceDate,
+              employeeId: emp.id,
+            },
+          });
+
+          if (existingOccurrence) return null;
+
+          const taskCode = await SequenceService.getNextTaskCode();
+          const deadline = buildDeadlineWithDueTime(occurrenceDate, tpl.dueTime);
+
+          const task = await tx.task.create({
+            data: {
+              taskCode,
+              title: tpl.title,
+              description: tpl.description,
+              priority: (tpl.priority?.toUpperCase() as Priority) || Priority.MEDIUM,
+              status: TaskStatus.TODO,
+              category: 'Recurring SOP',
+              startDate: occurrenceDate,
+              deadline,
+              reminderTime: tpl.dueTime,
+              assignedToId: emp.id,
+              assignedById: tpl.assignedById,
+              recurringTaskId: tpl.id,
+            },
+            include: {
+              assignedTo: { include: { user: true } },
+              assignedBy: true,
+            },
+          });
+
+          await tx.recurringTaskOccurrence.create({
+            data: {
+              recurringTaskId: tpl.id,
+              occurrenceDate,
+              employeeId: emp.id,
+              taskId: task.id,
+            },
+          });
+
+          await tx.taskAssignmentHistory.create({
+            data: {
+              taskId: task.id,
+              previousAssigneeId: null,
+              newAssigneeId: emp.id,
+              changedBy: 'System (Role Change Trigger)',
+            },
+          });
+
+          return task;
+        });
+
+        if (result) {
+          generatedCount++;
+          if (emp.userRefId) {
+            await NotificationService.sendNotification({
+              userId: emp.userRefId,
+              type: 'task_assigned',
+              title: 'New Role Task Assigned',
+              message: `"${result.title}" from your newly assigned role has been added to your tasks today.`,
+              relatedType: 'Task',
+              relatedId: result.id,
+            }).catch(() => {});
+          }
+        }
+      } catch (err: any) {
+        // Skip on P2002
+      }
+    }
+
+    return generatedCount;
+  }
+
+  /**
    * Generates today's occurrence immediately for a specific recurring task if due.
    */
   static async generateForTemplate(templateId: string, targetDate: Date = new Date()): Promise<any | null> {
     const tpl = await prisma.recurringTask.findUnique({
       where: { id: templateId },
       include: {
+        role: {
+          include: {
+            employees: {
+              where: { active: true },
+              include: { user: true },
+            },
+          },
+        },
         assignedTo: { include: { user: true } },
         assignedBy: true,
       },
     });
 
-    if (!tpl || !tpl.active || !tpl.assignedTo || !tpl.assignedTo.active) {
+    if (!tpl || !tpl.active) {
       return null;
     }
 
-    if (tpl.assignedTo.user && !tpl.assignedTo.user.isActive) {
+    if (tpl.roleId && (!tpl.role || !tpl.role.active)) {
       return null;
     }
 
@@ -288,69 +420,88 @@ export class RecurringTaskService {
     }
 
     const occurrenceDate = getISTDateMidnight(targetDate);
+    const targetEmployees: any[] = [];
+    if (tpl.roleId && tpl.role?.employees) {
+      for (const emp of tpl.role.employees) {
+        if (emp.active && (!emp.user || emp.user.isActive)) {
+          targetEmployees.push(emp);
+        }
+      }
+    } else if (tpl.assignedToId && tpl.assignedTo) {
+      if (tpl.assignedTo.active && (!tpl.assignedTo.user || tpl.assignedTo.user.isActive)) {
+        targetEmployees.push(tpl.assignedTo);
+      }
+    }
 
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const existingOccurrence = await tx.recurringTaskOccurrence.findUnique({
-          where: {
-            recurringTaskId_occurrenceDate: {
+    let lastCreatedTask: any = null;
+
+    for (const emp of targetEmployees) {
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          const existingOccurrence = await tx.recurringTaskOccurrence.findFirst({
+            where: {
               recurringTaskId: tpl.id,
               occurrenceDate,
+              employeeId: emp.id,
             },
-          },
+          });
+
+          if (existingOccurrence) return null;
+
+          const taskCode = await SequenceService.getNextTaskCode();
+          const deadline = buildDeadlineWithDueTime(occurrenceDate, tpl.dueTime);
+
+          const task = await tx.task.create({
+            data: {
+              taskCode,
+              title: tpl.title,
+              description: tpl.description,
+              priority: (tpl.priority?.toUpperCase() as Priority) || Priority.MEDIUM,
+              status: TaskStatus.TODO,
+              category: 'Recurring SOP',
+              startDate: occurrenceDate,
+              deadline,
+              reminderTime: tpl.dueTime,
+              assignedToId: emp.id,
+              assignedById: tpl.assignedById,
+              recurringTaskId: tpl.id,
+            },
+            include: {
+              assignedTo: { include: { user: true } },
+              assignedBy: true,
+            },
+          });
+
+          await tx.recurringTaskOccurrence.create({
+            data: {
+              recurringTaskId: tpl.id,
+              occurrenceDate,
+              employeeId: emp.id,
+              taskId: task.id,
+            },
+          });
+
+          await tx.taskAssignmentHistory.create({
+            data: {
+              taskId: task.id,
+              previousAssigneeId: null,
+              newAssigneeId: emp.id,
+              changedBy: 'System (Manual Trigger)',
+            },
+          });
+
+          return task;
         });
 
-        if (existingOccurrence) {
-          return null;
+        if (result) {
+          lastCreatedTask = result;
         }
-
-        const taskCode = await SequenceService.getNextTaskCode();
-        const deadline = buildDeadlineWithDueTime(occurrenceDate, tpl.dueTime);
-
-        const task = await tx.task.create({
-          data: {
-            taskCode,
-            title: tpl.title,
-            description: tpl.description,
-            priority: (tpl.priority?.toUpperCase() as Priority) || Priority.MEDIUM,
-            status: TaskStatus.TODO,
-            category: 'Recurring SOP',
-            startDate: occurrenceDate,
-            deadline,
-            reminderTime: tpl.dueTime,
-            assignedToId: tpl.assignedToId,
-            assignedById: tpl.assignedById,
-            recurringTaskId: tpl.id,
-          },
-          include: {
-            assignedTo: { include: { user: true } },
-            assignedBy: true,
-            recurringTask: true,
-          },
-        });
-
-        await tx.recurringTaskOccurrence.create({
-          data: {
-            recurringTaskId: tpl.id,
-            occurrenceDate,
-            taskId: task.id,
-          },
-        });
-
-        await tx.taskAssignmentHistory.create({
-          data: {
-            taskId: task.id,
-            previousAssigneeId: null,
-            newAssigneeId: tpl.assignedToId,
-            changedBy: 'System (Recurring SOP)',
-          },
-        });
-
-        return task;
-      });
-    } catch (err: any) {
-      if (err.code === 'P2002') return null;
-      throw err;
+      } catch (err: any) {
+        if (err.code === 'P2002') continue;
+        throw err;
+      }
     }
+
+    return lastCreatedTask;
   }
 }

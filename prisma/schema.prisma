@@ -11,11 +11,12 @@ generator client {
 // 1. AUTHENTICATION & USERS
 // ----------------------------------------------------
 model User {
-  id           String           @id @default(uuid())
-  userId       String?          @unique @map("user_id")
-  email        String           @unique
-  passwordHash String           @map("password_hash")
-  role         String           @default("EMPLOYEE") // ADMIN, EMPLOYEE
+  id                String           @id @default(uuid())
+  userId            String?          @unique @map("user_id")
+  email             String           @unique
+  passwordHash      String           @map("password_hash")
+  encryptedPassword String?          @map("encrypted_password")
+  role              String           @default("EMPLOYEE") // ADMIN, EMPLOYEE
   isActive     Boolean          @default(true) @map("active")
   lastLogin    DateTime?        @map("last_login")
   createdAt    DateTime         @default(now()) @map("created_at")
@@ -50,7 +51,42 @@ model UserPermission {
 }
 
 // ----------------------------------------------------
-// 3. EMPLOYEE RECORDS
+// 3. DEPARTMENTS & ROLES
+// ----------------------------------------------------
+model Department {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  roles       Role[]
+  employees   Employee[]
+
+  @@map("departments")
+}
+
+model Role {
+  id             String          @id @default(uuid())
+  name           String
+  departmentId   String          @map("department_id")
+  department     Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  description    String?
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  employees      Employee[]
+  recurringTasks RecurringTask[]
+
+  @@unique([departmentId, name])
+  @@index([departmentId])
+  @@map("roles")
+}
+
+// ----------------------------------------------------
+// 3.1 EMPLOYEE RECORDS
 // ----------------------------------------------------
 model Employee {
   id               String               @id @default(uuid())
@@ -61,6 +97,10 @@ model Employee {
   mobile           String               @map("mobile_number")
   department       String
   designation      String
+  departmentId     String?              @map("department_id")
+  departmentRef    Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  roleId           String?              @map("role_id")
+  roleRef          Role?                @relation(fields: [roleId], references: [id], onDelete: SetNull)
   reportingManager String?              @map("reporting_manager")
   joiningDate      DateTime             @map("joining_date")
   employmentStatus String               @default("Active") @map("employment_status")
@@ -94,6 +134,8 @@ model Employee {
   @@index([userId])
   @@index([active])
   @@index([department])
+  @@index([departmentId])
+  @@index([roleId])
   @@map("employees")
 }
 
@@ -263,8 +305,11 @@ model RecurringTask {
   workingDaysOnly Boolean   @default(true) @map("working_days_only") // Skips non-working days/Sundays
   active          Boolean   @default(true) // Active or Paused
 
-  assignedToId    String    @map("assigned_to_id")
-  assignedTo      Employee  @relation("RecurringAssignedTasks", fields: [assignedToId], references: [id])
+  roleId          String?   @map("role_id")
+  role            Role?     @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  assignedToId    String?   @map("assigned_to_id")
+  assignedTo      Employee? @relation("RecurringAssignedTasks", fields: [assignedToId], references: [id])
 
   assignedById    String    @map("assigned_by_id")
   assignedBy      Employee  @relation("RecurringCreatedTasks", fields: [assignedById], references: [id])
@@ -275,6 +320,7 @@ model RecurringTask {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
+  @@index([roleId])
   @@index([assignedToId])
   @@index([assignedById])
   @@index([active])
@@ -287,13 +333,15 @@ model RecurringTaskOccurrence {
   recurringTaskId String        @map("recurring_task_id")
   recurringTask   RecurringTask @relation(fields: [recurringTaskId], references: [id], onDelete: Cascade)
   occurrenceDate  DateTime      @map("occurrence_date") // IST midnight date
+  employeeId      String?       @map("employee_id")
   taskId          String        @unique @map("task_id")
   task            Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
   createdAt       DateTime      @default(now()) @map("created_at")
 
-  @@unique([recurringTaskId, occurrenceDate])
+  @@unique([recurringTaskId, occurrenceDate, employeeId])
   @@index([recurringTaskId])
   @@index([occurrenceDate])
+  @@index([employeeId])
   @@map("recurring_task_occurrences")
 }
 
