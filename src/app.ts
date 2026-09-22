@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -9,7 +9,7 @@ import { apiLimiter } from './middleware/rateLimit';
 
 const app = express();
 
-// Trust reverse proxy headers on Render / Cloudflare
+// Trust reverse proxy headers on Render / Cloudflare / Vercel
 app.set('trust proxy', 1);
 
 // Security & Headers
@@ -19,34 +19,103 @@ app.use(
   })
 );
 
-// Strict CORS Handling
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps, server-to-server, curl, health checks)
-      if (!origin) return callback(null, true);
+// Explicit Allowed Origins Set for fast, accurate lookup
+const EXPLICIT_ALLOWED_ORIGINS = new Set<string>([
+  'https://app.swaatienterprises.com',
+  'https://swaatienterprises.com',
+  'https://www.swaatienterprises.com',
+  'https://api.swaatienterprises.com',
+  'https://swaatienterprises.in',
+  'https://www.swaatienterprises.in',
+  'https://app.swaatienterprises.in',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+]);
 
-      const normalizedOrigin = origin.trim().replace(/^["']|["']$/g, '').trim().replace(/\/+$/, '');
+const ALLOWED_DOMAIN_PATTERNS = [
+  /^https:\/\/([a-zA-Z0-9_-]+\.)*swaatienterprises\.com$/,
+  /^https:\/\/([a-zA-Z0-9_-]+\.)*swaatienterprises\.in$/,
+  /^https:\/\/([a-zA-Z0-9_-]+\.)*vercel\.app$/,
+  /^https:\/\/([a-zA-Z0-9_-]+\.)*onrender\.com$/,
+  /^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?$/,
+];
 
-      const isAllowed =
-        env.CORS_ORIGINS.includes(normalizedOrigin) ||
-        /^https:\/\/([a-zA-Z0-9_-]+\.)?vercel\.app$/.test(normalizedOrigin) ||
-        /^https:\/\/([a-zA-Z0-9_-]+\.)?swaatienterprises\.in$/.test(normalizedOrigin) ||
-        /^https:\/\/([a-zA-Z0-9_-]+\.)?swaatienterprises\.com$/.test(normalizedOrigin) ||
-        /^https:\/\/([a-zA-Z0-9_-]+\.)?onrender\.com$/.test(normalizedOrigin);
+export const isOriginAllowed = (origin?: string): boolean => {
+  if (!origin) return true; // Allow non-browser requests (health checks, server-to-server, curl)
 
-      if (isAllowed) {
-        return callback(null, true);
-      }
+  const normalized = origin
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim()
+    .replace(/\/+$/, '')
+    .toLowerCase();
 
-      console.warn(`[CORS Blocked]: Origin ${normalizedOrigin} is not in allowed origins`);
-      return callback(null, false);
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-  })
-);
+  if (EXPLICIT_ALLOWED_ORIGINS.has(normalized)) return true;
+
+  if (
+    env.CORS_ORIGINS.some(
+      (o) => o.trim().replace(/\/+$/, '').toLowerCase() === normalized
+    )
+  ) {
+    return true;
+  }
+
+  return ALLOWED_DOMAIN_PATTERNS.some((pattern) => pattern.test(normalized));
+};
+
+// Top-level middleware: Failsafe CORS header injection & OPTIONS preflight handler for Vercel Serverless
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+
+  if (origin && isOriginAllowed(origin)) {
+    const normalizedOrigin = origin.trim().replace(/^["']|["']$/g, '').trim().replace(/\/+$/, '');
+    res.setHeader('Access-Control-Allow-Origin', normalizedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Vary', 'Origin');
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Requested-With, Accept, Origin, Access-Control-Allow-Headers, Access-Control-Request-Method, Access-Control-Request-Headers'
+    );
+    res.setHeader('Access-Control-Max-Age', '86400');
+    return res.status(200).end();
+  }
+
+  next();
+});
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`[CORS Blocked]: Origin ${origin} is not in allowed origins list`);
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Allow-Headers',
+    'Access-Control-Request-Method',
+    'Access-Control-Request-Headers',
+  ],
+  exposedHeaders: ['Authorization', 'Set-Cookie'],
+  optionsSuccessStatus: 200,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -104,4 +173,3 @@ if (!process.env.VERCEL) {
 }
 
 export default app;
-
