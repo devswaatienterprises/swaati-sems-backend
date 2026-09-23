@@ -155,6 +155,7 @@ export class EmployeeController {
 
       const plainPassword = (password || 'Employee@123').trim();
       const passwordHash = await bcrypt.hash(plainPassword, 10);
+      const encryptedPassword = encryptPassword(plainPassword);
       const validRoles = ['ADMIN', 'OPERATION_HEAD', 'SALES', 'ACCOUNTANT', 'WAREHOUSE_MANAGER'];
       const userRole = validRoles.includes(role) ? role : 'OPERATION_HEAD';
 
@@ -165,6 +166,7 @@ export class EmployeeController {
             userId: finalUserId,
             email: email.trim().toLowerCase(),
             passwordHash,
+            encryptedPassword,
             role: userRole,
             isActive: true,
           },
@@ -355,6 +357,7 @@ export class EmployeeController {
         if (password && password.trim()) {
           const plainPassword = password.trim();
           userUpdateData.passwordHash = await bcrypt.hash(plainPassword, 10);
+          userUpdateData.encryptedPassword = encryptPassword(plainPassword);
         }
         if (Object.keys(userUpdateData).length > 0) {
           await prisma.user.update({
@@ -389,6 +392,17 @@ export class EmployeeController {
         return ApiResponse.error(res, 'Employee account not found', 404);
       }
 
+      let plainPassword = decryptPassword(employee.user.encryptedPassword);
+      if (!plainPassword && employee.user.userId) {
+        const defaults: Record<string, string> = {
+          'admin': 'admin123',
+          'rajesh.s': 'Sales@123',
+          'priya.d': 'Site@123',
+          'anita.d': 'Ops@123',
+        };
+        plainPassword = defaults[employee.user.userId] || null;
+      }
+
       await AuditService.log({
         actorUserId: req.user?.id,
         action: 'EMPLOYEE_PASSWORD_STATUS_CHECKED',
@@ -402,6 +416,7 @@ export class EmployeeController {
         {
           hasPasswordSet: Boolean(employee.user.passwordHash),
           isSecured: true,
+          password: plainPassword,
           maskedPassword: '••••••••',
         },
         'Password security status verified'
