@@ -33,7 +33,7 @@ export const authLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false,
+  skipSuccessfulRequests: true,
   handler: createRateLimitHandler(
     'Too many login attempts from this IP address. Please wait 15 minutes before trying again.'
   ),
