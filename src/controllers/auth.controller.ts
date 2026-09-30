@@ -17,6 +17,7 @@ export class AuthController {
       }
 
       const identifier = (email || userId).trim().toLowerCase();
+      console.log(`[AUTH_DIAG] 1. Normalized Identifier: "${identifier}"`);
 
       // Find user by email or userId
       const user = await prisma.user.findFirst({
@@ -32,14 +33,27 @@ export class AuthController {
         },
       });
 
+      console.log(`[AUTH_DIAG] 2. User Found: ${!!user}`);
+
       if (!user) {
+        console.log(`[AUTH_DIAG] 9. 401 Condition Triggered: USER_NOT_FOUND for identifier "${identifier}"`);
         return ApiResponse.error(res, 'Invalid credentials provided.', 401);
       }
 
       const anyUser = user as any;
 
+      console.log(`[AUTH_DIAG] 3. User ID: "${anyUser.id}" (userId: "${anyUser.userId}")`);
+      console.log(`[AUTH_DIAG] 4. User Email: "${anyUser.email}"`);
+      console.log(`[AUTH_DIAG] 5. Active Status: User.isActive=${anyUser.isActive}, Employee.active=${anyUser.employee?.active ?? 'N/A'}`);
+
+      const hasHash = !!anyUser.passwordHash;
+      const hashPrefix = hasHash ? anyUser.passwordHash.substring(0, 4) : 'NONE';
+      console.log(`[AUTH_DIAG] 6. PasswordHash Exists: ${hasHash}`);
+      console.log(`[AUTH_DIAG] 7. PasswordHash Prefix: "${hashPrefix}"`);
+
       // Check active status on both User and Employee
       if (!anyUser.isActive || (anyUser.employee && !anyUser.employee.active)) {
+        console.log(`[AUTH_DIAG] 9. 403 Condition Triggered: ACCOUNT_DEACTIVATED`);
         return ApiResponse.error(
           res,
           'Your account has been deactivated. Please contact your CRM Administrator.',
@@ -48,7 +62,10 @@ export class AuthController {
       }
 
       const isMatch = await bcrypt.compare(password, anyUser.passwordHash);
+      console.log(`[AUTH_DIAG] 8. bcrypt.compare() Result: ${isMatch}`);
+
       if (!isMatch) {
+        console.log(`[AUTH_DIAG] 9. 401 Condition Triggered: BCRYPT_PASSWORD_MISMATCH`);
         return ApiResponse.error(res, 'Invalid credentials provided.', 401);
       }
 
